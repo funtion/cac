@@ -546,13 +546,13 @@ fi
 export PATH="$CAC_DIR/shim-bin:$PATH"
 
 # ── multi-layer telemetry protection ──
-# Modes: stealth (default) | paranoid | transparent
+# Modes: transparent (default) | stealth | paranoid
 #   stealth:     only DISABLE_TELEMETRY=1 — 1p_events blocked, GrowthBook/Statsig/Feature flags normal
 #                looks like a normal user; all fingerprints are fake so telemetry data is useless
 #   paranoid:    full 12-layer telemetry kill — zero telemetry (detectable as "anti-telemetry user")
 #   transparent: no intervention — for when fingerprint coverage is complete
 # Backward compat: conservative→stealth, aggressive→paranoid, off→transparent
-_telemetry_mode="stealth"
+_telemetry_mode="transparent"
 [[ -f "$_env_dir/telemetry_mode" ]] && _telemetry_mode=$(tr -d '[:space:]' < "$_env_dir/telemetry_mode")
 case "$_telemetry_mode" in
     conservative) _telemetry_mode="stealth" ;;
@@ -560,8 +560,8 @@ case "$_telemetry_mode" in
     off)          _telemetry_mode="transparent" ;;
 esac
 if [[ "$_telemetry_mode" != "stealth" ]] && [[ "$_telemetry_mode" != "paranoid" ]] && [[ "$_telemetry_mode" != "transparent" ]]; then
-    echo "[cac] warning: unknown telemetry mode '$_telemetry_mode', using stealth" >&2
-    _telemetry_mode="stealth"
+    echo "[cac] warning: unknown telemetry mode '$_telemetry_mode', using transparent" >&2
+    _telemetry_mode="transparent"
 fi
 
 if [[ "$_telemetry_mode" == "stealth" ]]; then

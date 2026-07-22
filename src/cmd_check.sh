@@ -104,7 +104,7 @@ cmd_check() {
     local wrapper_file="$(_env_launcher_path "$current")"
     local wrapper_content=""
     [[ -f "$wrapper_file" ]] && wrapper_content=$(<"$wrapper_file")
-    local telemetry_mode; telemetry_mode=$(_read "$env_dir/telemetry_mode" "stealth")
+    local telemetry_mode; telemetry_mode=$(_read "$env_dir/telemetry_mode" "transparent")
     # Normalize old names
     case "$telemetry_mode" in conservative) telemetry_mode="stealth" ;; aggressive) telemetry_mode="paranoid" ;; off) telemetry_mode="transparent" ;; esac
     local _tel_stealth_vars=("DISABLE_TELEMETRY" "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA")

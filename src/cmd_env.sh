@@ -109,8 +109,8 @@ _env_cmd_create() {
     date -u +"%Y-%m-%dT%H:%M:%S.000Z" > "$env_dir/first_start_time"
     [[ -n "$persona" ]] && echo "$persona" > "$env_dir/persona"
 
-    # Telemetry mode: stealth (default), paranoid, or transparent
-    [[ -z "$telemetry_mode" ]] && telemetry_mode=$(_cac_setting telemetry_mode stealth)
+    # Telemetry mode: transparent (default), stealth, or paranoid
+    [[ -z "$telemetry_mode" ]] && telemetry_mode=$(_cac_setting telemetry_mode transparent)
     echo "$telemetry_mode" > "$env_dir/telemetry_mode"
 
     mkdir -p "$env_dir/.claude"

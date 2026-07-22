@@ -1673,13 +1673,13 @@ fi
 export PATH="$CAC_DIR/shim-bin:$PATH"
 
 # ── multi-layer telemetry protection ──
-# Modes: stealth (default) | paranoid | transparent
+# Modes: transparent (default) | stealth | paranoid
 #   stealth:     only DISABLE_TELEMETRY=1 — 1p_events blocked, GrowthBook/Statsig/Feature flags normal
 #                looks like a normal user; all fingerprints are fake so telemetry data is useless
 #   paranoid:    full 12-layer telemetry kill — zero telemetry (detectable as "anti-telemetry user")
 #   transparent: no intervention — for when fingerprint coverage is complete
 # Backward compat: conservative→stealth, aggressive→paranoid, off→transparent
-_telemetry_mode="stealth"
+_telemetry_mode="transparent"
 [[ -f "$_env_dir/telemetry_mode" ]] && _telemetry_mode=$(tr -d '[:space:]' < "$_env_dir/telemetry_mode")
 case "$_telemetry_mode" in
     conservative) _telemetry_mode="stealth" ;;
@@ -1687,8 +1687,8 @@ case "$_telemetry_mode" in
     off)          _telemetry_mode="transparent" ;;
 esac
 if [[ "$_telemetry_mode" != "stealth" ]] && [[ "$_telemetry_mode" != "paranoid" ]] && [[ "$_telemetry_mode" != "transparent" ]]; then
-    echo "[cac] warning: unknown telemetry mode '$_telemetry_mode', using stealth" >&2
-    _telemetry_mode="stealth"
+    echo "[cac] warning: unknown telemetry mode '$_telemetry_mode', using transparent" >&2
+    _telemetry_mode="transparent"
 fi
 
 if [[ "$_telemetry_mode" == "stealth" ]]; then
@@ -2299,8 +2299,8 @@ _env_cmd_create() {
     date -u +"%Y-%m-%dT%H:%M:%S.000Z" > "$env_dir/first_start_time"
     [[ -n "$persona" ]] && echo "$persona" > "$env_dir/persona"
 
-    # Telemetry mode: stealth (default), paranoid, or transparent
-    [[ -z "$telemetry_mode" ]] && telemetry_mode=$(_cac_setting telemetry_mode stealth)
+    # Telemetry mode: transparent (default), stealth, or paranoid
+    [[ -z "$telemetry_mode" ]] && telemetry_mode=$(_cac_setting telemetry_mode transparent)
     echo "$telemetry_mode" > "$env_dir/telemetry_mode"
 
     mkdir -p "$env_dir/.claude"
@@ -2964,7 +2964,7 @@ cmd_check() {
     local wrapper_file="$(_env_launcher_path "$current")"
     local wrapper_content=""
     [[ -f "$wrapper_file" ]] && wrapper_content=$(<"$wrapper_file")
-    local telemetry_mode; telemetry_mode=$(_read "$env_dir/telemetry_mode" "stealth")
+    local telemetry_mode; telemetry_mode=$(_read "$env_dir/telemetry_mode" "transparent")
     # Normalize old names
     case "$telemetry_mode" in conservative) telemetry_mode="stealth" ;; aggressive) telemetry_mode="paranoid" ;; off) telemetry_mode="transparent" ;; esac
     local _tel_stealth_vars=("DISABLE_TELEMETRY" "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA")

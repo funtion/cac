@@ -49,4 +49,12 @@ HOME="$test_home" SHELL=/bin/bash PATH="$test_path" "$repo_dir/cac" stop >/dev/n
 HOME="$test_home" SHELL=/bin/bash PATH="$test_path" "$repo_dir/cac" work >/dev/null
 [[ "$(readlink "$test_home/.local/bin/claude")" == "$test_home/.cac/bin/claude" ]]
 
+HOME="$test_home" SHELL=/bin/bash PATH="$test_path" "$repo_dir/cac" \
+    env create fresh -c 1.0.0 >/dev/null
+fresh_telemetry=$(tr -d '[:space:]' < "$test_home/.cac/envs/fresh/telemetry_mode")
+if [[ "$fresh_telemetry" != "transparent" ]]; then
+    echo "expected new environment telemetry=transparent, got $fresh_telemetry" >&2
+    exit 1
+fi
+
 echo "transparent entrypoint: ok"
