@@ -72,10 +72,10 @@ icon: "rocket"
 
 ## What just happened?
 
-When you activated `work` and ran `claude`, cac's wrapper:
+When you activated `work` and ran `claude`, cac's symlinked launcher:
 
-1. Set `CLAUDE_CONFIG_DIR` to `~/.cac/envs/work/.claude/` (isolated config)
-2. Resolved the pinned Claude Code binary from `~/.cac/versions/2.1.81/claude`
+1. Pointed `~/.claude` at `~/.cac/envs/work/.claude/` (isolated config)
+2. Followed `~/.cac/envs/work/bin/claude` to the pinned Claude Code binary
 3. Injected device fingerprint shims (hostname, UUID, MAC)
 4. Blocked telemetry endpoints via DNS guard + environment variables
 5. Routed traffic through your proxy (if configured)
@@ -86,7 +86,7 @@ All of this is invisible to Claude Code — it sees a normal environment.
 ## Tips
 
 - **Verify your setup**: Run `cac env check` anytime to confirm your privacy protection is working. You can trust its results — if it says all green, you're protected.
-- **Check which claude you're running**: `which claude` shows whether you're using the cac-managed wrapper (`~/.cac/bin/claude`) or the default system claude.
+- **Check the public entrypoint**: `which claude` continues to show the standard `~/.local/bin/claude`; use `readlink` only when you need to inspect cac's symlink chain.
 - **Automatic safety checks**: Every time you start a new Claude Code session, cac automatically runs a quick check. If your environment or privacy has any issue, the session is terminated before any data is sent.
 - **Network resilience**: Proxy connections can be unstable. cac enforces strict proxy routing — if the proxy drops, traffic stops entirely rather than falling back to a direct connection. Your IP is never accidentally exposed.
 - **Modify environments after creation**: Use `cac env set` to change proxy or version without recreating the environment.

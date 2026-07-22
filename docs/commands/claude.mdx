@@ -47,7 +47,7 @@ Pin the current active environment to a specific version.
 cac claude pin 2.1.81
 ```
 
-This writes the version to `~/.cac/envs/<name>/version`. The wrapper resolves this file at launch time, so the change takes effect on the next `claude` invocation.
+This writes the version to `~/.cac/envs/<name>/version` and repoints `~/.cac/envs/<name>/bin/claude` to the pinned binary. The public `~/.local/bin/claude` entry stays unchanged, so external tools can keep invoking `claude` through its standard path.
 
 ## uninstall
 

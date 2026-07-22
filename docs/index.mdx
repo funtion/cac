@@ -35,7 +35,7 @@ Each environment is completely isolated: its own Claude Code binary, `.claude` c
     ```
   </Accordion>
   <Accordion title="Config isolation" icon="folder-tree">
-    Each environment gets its own `CLAUDE_CONFIG_DIR` — sessions, settings, memory, and auth tokens are fully separate.
+    `~/.claude` points to the active environment, so sessions, settings, memory, and auth tokens are fully separate while external tools keep using the standard path.
   </Accordion>
   <Accordion title="Fingerprint spoofing" icon="fingerprint">
     Shell shims + Node.js hooks replace all device identifiers: hardware UUID, hostname, MAC address, machine ID.

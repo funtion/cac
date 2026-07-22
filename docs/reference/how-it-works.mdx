@@ -6,19 +6,18 @@ icon: "shield"
 
 ## The wrapper
 
-When you run `claude`, it's actually cac's wrapper at `~/.cac/bin/claude` (which is first in `PATH`). The wrapper:
+When you run `claude`, `PATH` resolves to Claude's standard `~/.local/bin/claude` entry. cac keeps that public path stable while repointing its internal symlink to the active environment launcher. The launcher:
 
 ```
 claude (user types)
   │
   ▼
-~/.cac/bin/claude (wrapper)
+~/.local/bin/claude -> ~/.cac/bin/claude -> ~/.cac/envs/<name>/launcher/claude
   │
-  ├─ Read ~/.cac/current → active environment name
   ├─ Read ~/.cac/envs/<name>/ → identity, proxy, version
   │
-  ├─ Set CLAUDE_CONFIG_DIR → isolated .claude directory
-  ├─ Resolve versioned binary → ~/.cac/versions/<ver>/claude
+  ├─ Ensure ~/.claude -> ~/.cac/envs/<name>/.claude
+  ├─ Exec pinned version symlink → ~/.cac/envs/<name>/bin/claude
   │
   ├─ [if proxy] Pre-flight TCP check
   ├─ [if proxy] Inject HTTPS_PROXY, HTTP_PROXY, ALL_PROXY
@@ -36,7 +35,7 @@ claude (user types)
   ├─ [if proxy + TUN] Start auto-relay (bypasses TUN automatically)
   │
   ▼
-~/.cac/versions/<ver>/claude (real binary)
+~/.cac/envs/<name>/bin/claude -> ~/.cac/versions/<ver>/claude
 ```
 
 ## Fingerprint spoofing layers
@@ -100,10 +99,12 @@ Each environment has a client certificate signed by cac's self-signed CA. The CA
 
 ## Config isolation
 
-`CLAUDE_CONFIG_DIR` is set to `~/.cac/envs/<name>/.claude/`. This means:
+`~/.claude` is a symlink to `~/.cac/envs/<name>/.claude/`. Claude Code and external tools can use the default config path, and this means:
 - Sessions are per-environment
 - Settings are per-environment
 - Project memory is per-environment
 - Auth tokens are per-environment
 
 Switching environments with `cac work` vs `cac personal` gives you completely separate Claude Code experiences.
+
+The original host config is moved to `~/.cac/host/.claude` the first time cac takes over the standard path. `cac stop` restores `~/.claude` to that host config.

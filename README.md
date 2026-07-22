@@ -37,6 +37,7 @@
 
 - **版本管理** — 安装、切换、回滚 Claude Code 版本
 - **环境隔离** — 每个环境独立的 `.claude` 配置 + 身份 + 代理
+- **透明入口** — `claude` 仍从标准的 `~/.local/bin/claude` 启动，外部工具无需感知 cac 环境
 - **隐私保护** — 设备指纹伪装 + 遥测分级（`conservative`/`aggressive`）+ mTLS
 - **配置继承** — `--clone` 从宿主或其他环境继承配置，`~/.cac/settings.json` 全局偏好
 - **零配置** — 无需 setup，首次使用自动初始化
@@ -48,7 +49,7 @@
 > **代理工具冲突**：如果本地启动了 Clash、Shadowrocket、Surge、sing-box 等代理/VPN 工具，建议在使用 cac 时先关闭。TUN 模式兼容性仍属实验性功能。即使发生冲突，cac 也会自动停止连接（fail-closed），**不会泄露你的真实 IP**。
 
 - **首次登录**：启动 `claude` 后，输入 `/login` 完成 OAuth 授权
-- **安全验证**：随时运行 `cac env check` 确认隐私保护状态，也可以 `which claude` 确认使用的是 cac 托管的 claude
+- **安全验证**：随时运行 `cac env check` 确认隐私保护状态；`which claude` 会保持显示标准入口 `~/.local/bin/claude`
 - **自动安全检查**：每次启动 Claude Code 会话时，cac 会快速检查环境。如有异常会终止会话，不会发送任何数据
 - **网络稳定性**：流量严格走代理——代理断开时流量完全停止，不会回退直连。内置心跳检测和自动恢复，断线后无需手动重启
 - **IPv6**：建议系统级关闭，防止真实地址泄露
@@ -108,6 +109,7 @@ cac ls                                  # = cac env ls
 
 每个环境完全隔离：
 - **Claude Code 版本** — 不同环境可以用不同版本
+- **透明入口** — 外部工具继续调用标准的 `~/.local/bin/claude`
 - **`.claude` 配置** — sessions、settings、memory 各自独立
 - **身份信息** — UUID、hostname、MAC 等完全不同
 - **代理出口** — 每个环境走不同代理（或不走代理）
@@ -154,15 +156,16 @@ socks5://u:p@host:port    指定协议
 | 遥测阻断 | DNS guard + 环境变量 + fetch 拦截 + 分级模式（`conservative`/`aggressive`） |
 | 健康检查 bypass | 进程内 Node.js 拦截（无需 /etc/hosts 或 root） |
 | mTLS 客户端证书 | 自签 CA + 每环境独立客户端证书 |
-| `.claude` 配置隔离 | 每个环境独立的 `CLAUDE_CONFIG_DIR` |
+| `.claude` 配置隔离 | `~/.claude` 符号链接到当前环境，原宿主配置保存在 `~/.cac/host/.claude` |
 
 ### 工作原理
 
 ```
-              cac wrapper（进程级，零侵入源代码）
+              cac symlink + launcher（进程级，零侵入源代码）
               ┌──────────────────────────────────────────┐
-  claude ────►│  CLAUDE_CONFIG_DIR → 隔离配置目录          │
-              │  版本解析 → ~/.cac/versions/<ver>/claude   │
+  claude ────►│  ~/.local/bin/claude → 当前环境 launcher   │
+              │  ~/.claude → 当前环境配置目录              │
+              │  版本 symlink → envs/<name>/bin/claude    │
               │  健康检查 bypass（进程内拦截）                │
               │  12 层遥测环境变量保护                      │──► 代理 ──► Anthropic API
               │  NODE_OPTIONS: DNS guard + 指纹钩子        │
@@ -176,7 +179,10 @@ socks5://u:p@host:port    指定协议
 ```
 ~/.cac/
 ├── versions/<ver>/claude     # Claude Code 二进制文件
-├── bin/claude                # wrapper
+├── bin/claude                # symlink -> 当前环境 launcher
+├── envs/<name>/bin/claude    # symlink -> 版本二进制
+├── host/.claude              # 原宿主 Claude 配置备份
+├── host/bin/claude           # 原 ~/.local/bin/claude 入口
 ├── shim-bin/                 # ioreg / hostname / ifconfig / cat shim
 ├── fingerprint-hook.js       # Node.js 指纹拦截
 ├── cac-dns-guard.js          # DNS + fetch 遥测拦截
@@ -233,7 +239,7 @@ cac docker port 6287 # 端口转发
 > **Proxy tool conflicts**: If you have Clash, Shadowrocket, Surge, sing-box or other proxy/VPN tools running locally, turn them off before using cac. TUN-mode compatibility is still experimental. Even if a conflict occurs, cac will fail-closed — **your real IP is never exposed**.
 
 - **First login**: Run `claude`, then type `/login`. Health check is automatically bypassed.
-- **Verify your setup**: Run `cac env check` anytime. Use `which claude` to confirm you're using the cac-managed wrapper.
+- **Verify your setup**: Run `cac env check` anytime. `which claude` continues to show the standard `~/.local/bin/claude` entry.
 - **Automatic safety checks**: Every new Claude Code session runs a quick cac check. If anything is wrong, the session is terminated before any data is sent.
 - **Network resilience**: Traffic is strictly routed through your proxy. If the proxy drops, traffic stops entirely — no fallback to direct connection. Built-in heartbeat detection and auto-recovery — no manual restart needed after disconnections.
 - **IPv6**: Recommend disabling system-wide to prevent real address exposure.
@@ -293,6 +299,7 @@ cac ls                                  # = cac env ls
 
 Each environment is fully isolated:
 - **Claude Code version** — different envs can use different versions
+- **Transparent entrypoint** — external tools keep calling the standard `~/.local/bin/claude`
 - **`.claude` config** — sessions, settings, memory are independent
 - **Identity** — UUID, hostname, MAC are all different
 - **Proxy** — each env routes through a different proxy (or none)
@@ -331,15 +338,16 @@ Each environment is fully isolated:
 | Telemetry blocking | DNS guard + env vars + fetch interception + modes (`conservative`/`aggressive`) |
 | Health check bypass | In-process Node.js interception (no `/etc/hosts`, no root) |
 | mTLS client certificates | Self-signed CA + per-profile client certs |
-| `.claude` config isolation | Per-environment `CLAUDE_CONFIG_DIR` |
+| `.claude` config isolation | `~/.claude` symlinks to the active environment; original host config lives in `~/.cac/host/.claude` |
 
 ### How it works
 
 ```
-              cac wrapper (process-level, zero source invasion)
+              cac symlink + launcher (process-level, zero source invasion)
               ┌──────────────────────────────────────────┐
-  claude ────►│  CLAUDE_CONFIG_DIR → isolated config dir   │
-              │  Version resolve → ~/.cac/versions/<ver>   │
+  claude ────►│  ~/.local/bin/claude → active env launcher │
+              │  ~/.claude → active env config dir          │
+              │  Version symlink → envs/<name>/bin/claude  │
               │  Health check bypass (in-process intercept) │
               │  Env vars: 12-layer telemetry kill         │──► Proxy ──► Anthropic API
               │  NODE_OPTIONS: DNS guard + fingerprint     │
@@ -353,7 +361,10 @@ Each environment is fully isolated:
 ```
 ~/.cac/
 ├── versions/<ver>/claude     # Claude Code binaries
-├── bin/claude                # wrapper
+├── bin/claude                # symlink -> active env launcher
+├── envs/<name>/bin/claude    # symlink -> version binary
+├── host/.claude              # original host Claude config backup
+├── host/bin/claude           # original ~/.local/bin/claude entry
 ├── shim-bin/                 # ioreg / hostname / ifconfig / cat shims
 ├── fingerprint-hook.js       # Node.js fingerprint interception
 ├── cac-dns-guard.js          # DNS + fetch telemetry interception

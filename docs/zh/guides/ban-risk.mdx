@@ -13,7 +13,7 @@ cac 工作在**设备指纹层**。每个环境独立提供：
 | 硬件 UUID 隔离 | 替换 `ioreg` / `machine-id` / `wmic` 输出，每个环境上报不同 UUID |
 | 主机名 / MAC 隔离 | Shell shim + Node.js 钩子替换 `os.hostname()` 和 `os.networkInterfaces()` |
 | 遥测阻断 | DNS guard + fetch 拦截 + 12 个环境变量开关，阻止 Datadog、1P 事件日志和 GrowthBook 的所有上报 |
-| 配置隔离 | 每个环境有独立的 `CLAUDE_CONFIG_DIR`，sessions、settings、memory 完全分离 |
+| 配置隔离 | `~/.claude` 指向当前环境，sessions、settings、memory 完全分离 |
 | mTLS 客户端证书 | 每个环境独立的客户端证书，增加一层 TLS 身份隔离 |
 
 运行 `cac env check` 可以验证以上所有保护是否生效。
@@ -46,7 +46,7 @@ cac 无法接触 Anthropic 的服务端系统，以下风险不在其保护范�
 - [ ] 运行 `cac env check`，确认 UUID、主机名、MAC、遥测状态全部通过
 - [ ] 检查代理 IP 是住宅 IP 还是数据中心 IP（`ipinfo.io`、`scamalytics.com`）
 - [ ] 确认支付方式是否曾与被封账号关联
-- [ ] 确认是否有其他设备在共用同一个环境（同一 `CLAUDE_CONFIG_DIR`）或同一代理
+- [ ] 确认是否有其他设备在共用同一个环境（同一个活跃 `~/.claude` 目标）或同一代理
 - [ ] 检查 `cac env check` 输出中是否有 `WARN` 或 `FAIL` 项
 
 ## 多设备共用环境

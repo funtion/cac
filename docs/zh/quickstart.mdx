@@ -72,10 +72,10 @@ icon: "rocket"
 
 ## 刚才发生了什么？
 
-当你创建环境并运行 `claude` 时，cac 的包装器：
+当你创建环境并运行 `claude` 时，cac 的符号链接启动器：
 
-1. 将 `CLAUDE_CONFIG_DIR` 设置为 `~/.cac/envs/work/.claude/`（隔离配置）
-2. 解析并使用对应版本的 Claude Code 二进制文件
+1. 将 `~/.claude` 指向 `~/.cac/envs/work/.claude/`（隔离配置）
+2. 通过 `~/.cac/envs/work/bin/claude` 找到锁定的 Claude Code 二进制文件
 3. 注入设备指纹代理脚本（主机名、UUID、MAC）
 4. 通过 DNS 守卫 + 环境变量拦截遥测端点
 5. 通过你的代理路由流量（如果已配置）
@@ -86,7 +86,7 @@ icon: "rocket"
 ## 使用建议
 
 - **随时验证**: 运行 `cac env check` 确认你的隐私保护是否正常工作。你可以放心信赖它的结果——如果全绿，说明你受到了完整保护。
-- **确认 claude 来源**: `which claude` 可以查看你使用的是 cac 托管的 wrapper（`~/.cac/bin/claude`）还是系统默认的 claude。
+- **确认对外入口**: `which claude` 会继续显示标准的 `~/.local/bin/claude`；只有需要检查 cac 符号链接链时才使用 `readlink`。
 - **自动安全检查**: 每次启动新的 Claude Code 会话时，cac 会自动快速运行一次检查。如果环境或隐私存在问题，会话会在发送任何数据之前被终止。
 - **网络稳定性**: 代理连接可能出现波动。cac 强制所有流量走代理——如果代理断开，流量会完全停止，而不是回退到直连。你的 IP 永远不会被意外暴露。
 - **创建后可修改**: 使用 `cac env set` 随时更改代理或版本，无需重建环境。

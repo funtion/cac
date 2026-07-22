@@ -47,7 +47,7 @@ Installed Claude Code versions:
 cac claude pin 2.1.81
 ```
 
-这会将版本写入 `~/.cac/envs/<name>/version`。包装器在启动时解析此文件，因此更改会在下次 `claude` 调用时生效。
+这会将版本写入 `~/.cac/envs/<name>/version`，并把 `~/.cac/envs/<name>/bin/claude` 重指向锁定的二进制文件。对外的 `~/.local/bin/claude` 入口保持不变，因此其他工具仍通过标准路径调用 `claude`。
 
 ## uninstall
 

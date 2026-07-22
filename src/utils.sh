@@ -103,6 +103,61 @@ _get_real_cmd() {
         command -v "$cmd" 2>/dev/null || true
 }
 
+_absolute_link_target() {
+    local path="$1" target="$2"
+    if [[ "$target" != /* ]]; then
+        local dir
+        dir="$(cd "$(dirname "$path")" 2>/dev/null && pwd)" || return 1
+        target="$dir/$target"
+    fi
+    printf '%s\n' "$target"
+}
+
+_resolve_link_chain() {
+    local path="$1" target="" depth=0
+    while [[ -L "$path" ]] && [[ $depth -lt 20 ]]; do
+        target=$(readlink "$path" 2>/dev/null || true)
+        [[ -n "$target" ]] || break
+        path=$(_absolute_link_target "$path" "$target") || break
+        (( depth++ )) || true
+    done
+    printf '%s\n' "$path"
+}
+
+_is_cac_managed_claude_entry() {
+    local path="$1"
+    case "$path" in
+        "$CAC_DIR/bin/claude"|"$CAC_DIR/bin/claude.inactive"|"$CAC_DIR/envs/"*/launcher/claude)
+            return 0
+            ;;
+    esac
+
+    if [[ -L "$path" ]]; then
+        local target
+        target=$(readlink "$path" 2>/dev/null || true)
+        if [[ -n "$target" ]]; then
+            target=$(_absolute_link_target "$path" "$target" 2>/dev/null || echo "$target")
+            case "$target" in
+                "$CAC_DIR/bin/claude"|"$CAC_DIR/bin/claude.inactive"|"$CAC_DIR/envs/"*/launcher/claude)
+                    return 0
+                    ;;
+            esac
+        fi
+    fi
+
+    if [[ -f "$path" ]]; then
+        local header
+        header=$(sed -n '1,8p' "$path" 2>/dev/null || true)
+        case "$header" in
+            *CAC_LOCAL_BIN_SHIM=1*|*CAC_WRAPPER_VER=*)
+                return 0
+                ;;
+        esac
+    fi
+
+    return 1
+}
+
 # host:port:user:pass → http://user:pass@host:port
 # socks5://host:port:user:pass → socks5://user:pass@host:port
 # or pass a standard URL directly (http://, https://, socks5://)
@@ -214,6 +269,35 @@ _auto_detect_proxy() {
 
 _current_env()  { _read "$CAC_DIR/current"; }
 _env_dir()      { echo "$ENVS_DIR/$1"; }
+_host_claude_dir() { echo "$CAC_DIR/host/.claude"; }
+_host_claude_json() { echo "$CAC_DIR/host/.claude.json"; }
+_standard_claude_bin() { echo "$HOME/.local/bin/claude"; }
+_host_claude_bin() { echo "$CAC_DIR/host/bin/claude"; }
+
+_is_cac_claude_dir_target() {
+    local target="$1"
+    case "$target" in
+        "$ENVS_DIR"/*/.claude|"$CAC_DIR"/envs/*/.claude) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+_is_cac_claude_json_target() {
+    local target="$1"
+    case "$target" in
+        "$ENVS_DIR"/*/.claude/.claude.json|"$CAC_DIR"/envs/*/.claude/.claude.json) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+_resolve_host_claude_dir() {
+    local host; host=$(_host_claude_dir)
+    if [[ -d "$host" || -L "$host" ]]; then
+        echo "$host"
+    elif [[ -d "$HOME/.claude" && ! -L "$HOME/.claude" ]]; then
+        echo "$HOME/.claude"
+    fi
+}
 
 # ── Version management helpers ────────────────────────────────────
 
@@ -352,8 +436,24 @@ _require_env() {
 }
 
 _find_real_claude() {
-    PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "$CAC_DIR/bin" | tr '\n' ':') \
-        command -v claude 2>/dev/null || true
+    local dir candidate resolved
+    local IFS=:
+    for dir in $PATH; do
+        [[ -n "$dir" ]] || dir="."
+        case "$dir" in
+            "$CAC_DIR/bin"|"$CAC_DIR/bin/"|"$CAC_DIR/shim-bin"|"$CAC_DIR/shim-bin/")
+                continue
+                ;;
+        esac
+        candidate="$dir/claude"
+        [[ -e "$candidate" || -L "$candidate" ]] || continue
+        [[ -x "$candidate" ]] || continue
+        _is_cac_managed_claude_entry "$candidate" && continue
+        resolved=$(_resolve_link_chain "$candidate")
+        printf '%s\n' "$resolved"
+        return 0
+    done
+    return 0
 }
 
 _detect_rc_file() {
@@ -408,21 +508,20 @@ _write_path_to_rc() {
     local rc_file="${1:-$(_detect_rc_file)}"
     if [[ -z "$rc_file" ]]; then
         echo "  $(_yellow '⚠') shell config file not found, please add PATH manually:"
-        echo '    export PATH="$HOME/bin:$PATH"'
-        echo '    export PATH="$HOME/.cac/bin:$PATH"'
+        echo '    export PATH="$HOME/.local/bin:$HOME/bin:$PATH"'
         return 0
     fi
 
     mkdir -p "$(dirname "$rc_file")"
     [[ -f "$rc_file" ]] || touch "$rc_file"
 
-    if grep -q '# >>> cac >>>' "$rc_file" 2>/dev/null; then
+    if grep -q '# >>> cac' "$rc_file" 2>/dev/null && ! grep -q '\.cac/bin' "$rc_file" 2>/dev/null; then
         echo "  ✓ PATH already exists in $rc_file, skipping"
         return 0
     fi
 
-    # Compat: remove old format if present
-    if ! _is_fish_rc "$rc_file" && grep -q '\.cac/bin' "$rc_file" 2>/dev/null; then
+    # Compat: replace the old cac-specific PATH entry with standard user bins.
+    if grep -q '# >>> cac' "$rc_file" 2>/dev/null || grep -q '\.cac/bin' "$rc_file" 2>/dev/null; then
         _remove_path_from_rc "$rc_file"
     fi
 
@@ -430,13 +529,8 @@ _write_path_to_rc() {
         cat >> "$rc_file" << 'CACEOF'
 
 # >>> cac — Claude Code Cloak >>>
-fish_add_path --move --path "$HOME/.cac/bin" >/dev/null 2>&1
-function cac
-    command cac $argv
-    set -l _rc $status
-    fish_add_path --move --path "$HOME/.cac/bin" >/dev/null 2>&1
-    return $_rc
-end
+fish_add_path --move --path "$HOME/bin" >/dev/null 2>&1
+fish_add_path --move --path "$HOME/.local/bin" >/dev/null 2>&1
 # <<< cac — Claude Code Cloak <<<
 CACEOF
         echo "  ✓ PATH written to $rc_file"
@@ -446,18 +540,8 @@ CACEOF
     cat >> "$rc_file" << 'CACEOF'
 
 # >>> cac — Claude Code Cloak >>>
-PATH=$(echo "$PATH" | tr ':' '\n' | grep -v '\.cac/bin' | tr '\n' ':' | sed 's/:$//')
-export PATH="$HOME/.cac/bin:$PATH"
-cac() {
-    local _cac_bin
-    _cac_bin=$(PATH=$(echo "$PATH" | tr ':' '\n' | grep -v '\.cac/bin' | tr '\n' ':') command -v cac 2>/dev/null)
-    [[ -z "$_cac_bin" ]] && { echo "[cac] error: cac binary not found in PATH" >&2; return 1; }
-    command "$_cac_bin" "$@"
-    local _rc=$?
-    PATH=$(echo "$PATH" | tr ':' '\n' | grep -v '\.cac/bin' | tr '\n' ':' | sed 's/:$//')
-    export PATH="$HOME/.cac/bin:$PATH"
-    return $_rc
-}
+PATH=$(echo "$PATH" | tr ':' '\n' | grep -v -e "^$HOME/.local/bin$" -e "^$HOME/bin$" | tr '\n' ':' | sed 's/:$//')
+export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
 # <<< cac — Claude Code Cloak <<<
 CACEOF
     echo "  ✓ PATH written to $rc_file"
@@ -491,7 +575,7 @@ _remove_path_from_rc() {
 
 _update_claude_json_user_id() {
     local user_id="$1"
-    local config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+    local config_dir="$HOME/.claude"
     local claude_json="$config_dir/.claude.json"
     [[ -f "$claude_json" ]] || claude_json="$HOME/.claude.json"
     [[ -f "$claude_json" ]] || return 0

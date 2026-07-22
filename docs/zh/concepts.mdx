@@ -17,6 +17,16 @@ icon: "lightbulb"
 
 你可以同时安装多个版本。每个环境可以锁定不同的版本。
 
+对外的 `claude` 命令保持在稳定路径：
+
+```
+~/.local/bin/claude -> ~/.cac/bin/claude -> ~/.cac/envs/work/launcher/claude
+~/.cac/envs/work/bin/claude -> ~/.cac/versions/2.1.81/claude
+~/.claude -> ~/.cac/envs/work/.claude
+```
+
+其他工具继续调用 `claude`、读取 `~/.claude` 即可；激活环境或切换版本时，cac 会重指向这些符号链接。
+
 ```bash
 cac claude install latest
 cac claude install 2.1.81
@@ -37,7 +47,9 @@ cac claude ls
 
 ```
 ~/.cac/envs/work/
-├── .claude/            # 隔离的 CLAUDE_CONFIG_DIR
+├── .claude/            # 隔离的 Claude 配置，通过 ~/.claude 暴露
+├── launcher/claude     # 标准 claude 入口最终指向的环境启动器
+├── bin/claude          # 指向锁定 Claude Code 二进制的符号链接
 ├── proxy               # 代理 URL（可选）
 ├── version             # 锁定的 Claude Code 版本
 ├── uuid                # 伪装的硬件 UUID

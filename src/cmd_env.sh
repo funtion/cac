@@ -115,16 +115,17 @@ _env_cmd_create() {
 
     mkdir -p "$env_dir/.claude"
 
-    # Initialize settings.json, statusline, and CLAUDE.md
+    # Initialize settings.json and statusline
     _write_env_settings "$env_dir/.claude"
     _write_statusline_script "$env_dir/.claude"
-    _write_env_claude_md "$env_dir/.claude" "$name"
 
     # Clone config from source
     if [[ -n "$clone_source" ]]; then
         local src_claude_dir
         if [[ "$clone_source" == "host" ]]; then
-            src_claude_dir="$HOME/.claude"
+            _adopt_claude_home_dir
+            src_claude_dir=$(_resolve_host_claude_dir)
+            [[ -n "$src_claude_dir" ]] || src_claude_dir="$HOME/.claude"
         elif [[ -d "$ENVS_DIR/$clone_source/.claude" ]]; then
             src_claude_dir="$ENVS_DIR/$clone_source/.claude"
         else
@@ -149,7 +150,6 @@ _env_cmd_create() {
                     ln -sf "$src_claude_dir/CLAUDE.md" "$env_dir/.claude/CLAUDE.md"
                 else
                     cp "$src_claude_dir/CLAUDE.md" "$env_dir/.claude/CLAUDE.md"
-                    _write_env_claude_md "$env_dir/.claude" "$name" --append
                 fi
             fi
             if [[ -f "$src_claude_dir/settings.json" ]]; then
@@ -185,9 +185,7 @@ MERGE_EOF
     # Auto-activate
     echo "$name" > "$CAC_DIR/current"
     rm -f "$CAC_DIR/stopped"
-    if [[ -d "$env_dir/.claude" ]]; then
-        export CLAUDE_CONFIG_DIR="$env_dir/.claude"
-    fi
+    _write_wrapper "$name"
 
     local elapsed; elapsed=$(_timer_elapsed)
     echo
@@ -278,11 +276,7 @@ _env_cmd_activate() {
 
     echo "$name" > "$CAC_DIR/current"
     rm -f "$CAC_DIR/stopped"
-
-    if [[ -d "$ENVS_DIR/$name/.claude" ]]; then
-        export CLAUDE_CONFIG_DIR="$ENVS_DIR/$name/.claude"
-    fi
-
+    _write_wrapper "$name"
 
     # Relay lifecycle
     _relay_stop 2>/dev/null || true
@@ -371,6 +365,8 @@ _env_cmd_set() {
             local ver
             ver=$(_ensure_version_installed "$value") || exit 1
             echo "$ver" > "$env_dir/version"
+            _sync_env_version_symlink "$name" "$ver"
+            [[ "$name" == "$(_current_env)" ]] && _write_wrapper "$name"
             echo "$(_green_bold "Set") version for $(_bold "$name") → $(_cyan "$ver")"
             ;;
         telemetry)
@@ -405,6 +401,7 @@ _env_cmd_set() {
 
 _env_cmd_stop() {
     _relay_stop 2>/dev/null || true
+    _restore_host_claude_symlinks
     touch "$CAC_DIR/stopped"
     echo "  $(_green "✓") cac paused — claude will run without any cac injection"
     echo "  $(_dim "resume with:") $(_green "cac <name>")"

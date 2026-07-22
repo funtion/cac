@@ -16,12 +16,16 @@ icon: "folder-tree"
 │
 ├── envs/                         # environments
 │   └── work/
-│       ├── .claude/              # isolated CLAUDE_CONFIG_DIR
+│       ├── .claude/              # isolated config exposed via ~/.claude
 │       │   ├── settings.json         # Claude Code settings (statusline, permissions)
 │       │   ├── statusline-command.sh # status bar script
-│       │   ├── CLAUDE.md             # cac orientation for Claude Code
+│       │   ├── CLAUDE.md             # optional user/project memory
 │       │   ├── projects/
 │       │   └── ...
+│       ├── launcher/
+│       │   └── claude            # environment launcher
+│       ├── bin/
+│       │   └── claude -> ~/.cac/versions/2.1.81/claude
 │       ├── proxy                 # proxy URL (optional)
 │       ├── version               # pinned Claude Code version
 │       ├── type                  # "local" or "container"
@@ -37,7 +41,12 @@ icon: "folder-tree"
 │       └── client_key.pem        # mTLS private key
 │
 ├── bin/
-│   └── claude                    # wrapper script (intercepts all claude calls)
+│   └── claude -> ~/.cac/envs/work/launcher/claude
+│
+├── host/
+│   ├── .claude                   # original host config moved aside
+│   ├── .claude.json              # original host metadata moved aside
+│   └── bin/claude                # original ~/.local/bin/claude entry
 │
 ├── shim-bin/                     # device identity shims
 │   ├── hostname                  # returns fake hostname

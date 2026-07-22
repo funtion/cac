@@ -35,20 +35,73 @@ cmd_check() {
 
     # ── wrapper check (instant) ──
     local claude_path; claude_path="$(command -v claude 2>/dev/null || true)"
-    if [[ -z "$claude_path" ]] || [[ "$claude_path" != *"/.cac/bin/claude" ]]; then
+    local _standard_bin; _standard_bin=$(_standard_claude_bin)
+    if [[ "$claude_path" == "$_standard_bin" ]] && _is_cac_managed_claude_entry "$claude_path"; then
+        echo "    $(_green "✓") wrapper    active $(_dim "at ~/.local/bin/claude")"
+    else
         local _rc; _rc=$(_detect_rc_file)
         if [[ -n "$_rc" ]] && grep -q '# >>> cac' "$_rc" 2>/dev/null; then
-            echo "    $(_green "✓") wrapper    configured in ${_rc/#$HOME/~}"
+            echo "    $(_yellow "⚠") wrapper    configured in ${_rc/#$HOME/~}; restart the shell"
         else
             _write_path_to_rc "$_rc" >/dev/null 2>&1 || true
-            echo "    $(_green "✓") wrapper    $(_dim "added to ${_rc/#$HOME/~}")"
+            echo "    $(_yellow "⚠") wrapper    $(_dim "added standard user bins to ${_rc/#$HOME/~}")"
+        fi
+        problems+=("claude does not resolve through ~/.local/bin/claude")
+    fi
+
+    # ── symlink chain check (instant) ──
+    local _link_ok=0 _link_total=0
+    local _global_link="$CAC_DIR/bin/claude"
+    local _standard_target=""
+    _standard_target=$(readlink "$_standard_bin" 2>/dev/null || true)
+    [[ -z "$_standard_target" ]] || _standard_target=$(_absolute_link_target "$_standard_bin" "$_standard_target" 2>/dev/null || echo "$_standard_target")
+    (( _link_total++ )) || true
+    if [[ -L "$_standard_bin" ]] && [[ "$_standard_target" == "$_global_link" ]]; then
+        (( _link_ok++ )) || true
+    else
+        problems+=("~/.local/bin/claude symlink invalid")
+    fi
+
+    local _expected_launcher; _expected_launcher=$(_env_launcher_path "$current")
+    (( _link_total++ )) || true
+    if [[ -L "$_global_link" ]] && [[ "$(readlink "$_global_link" 2>/dev/null || true)" == "$_expected_launcher" ]] && [[ -x "$_expected_launcher" ]]; then
+        (( _link_ok++ )) || true
+    else
+        problems+=("~/.cac/bin/claude symlink invalid")
+    fi
+
+    if [[ -n "$ver" ]] && [[ "$ver" != "?" ]] && [[ "$ver" != "system" ]]; then
+        local _version_link; _version_link=$(_env_version_link_path "$current")
+        local _expected_bin; _expected_bin=$(_version_binary "$ver")
+        (( _link_total++ )) || true
+        if [[ -L "$_version_link" ]] && [[ "$(readlink "$_version_link" 2>/dev/null || true)" == "$_expected_bin" ]] && [[ -x "$_expected_bin" ]]; then
+            (( _link_ok++ )) || true
+        else
+            problems+=("environment Claude version symlink invalid")
+        fi
+    fi
+
+    local _expected_config="$env_dir/.claude"
+    (( _link_total++ )) || true
+    if [[ -L "$HOME/.claude" ]] && [[ "$(readlink "$HOME/.claude" 2>/dev/null || true)" == "$_expected_config" ]] && [[ -d "$_expected_config" ]]; then
+        (( _link_ok++ )) || true
+    else
+        problems+=("~/.claude symlink invalid")
+    fi
+
+    local _expected_json="$env_dir/.claude/.claude.json"
+    if [[ "$_link_ok" -eq "$_link_total" ]]; then
+        if [[ -L "$HOME/.claude.json" ]] && [[ "$(readlink "$HOME/.claude.json" 2>/dev/null || true)" == "$_expected_json" ]]; then
+            echo "    $(_green "✓") symlinks   ${_link_ok}/${_link_total} valid $(_dim "+ .claude.json")"
+        else
+            echo "    $(_green "✓") symlinks   ${_link_ok}/${_link_total} valid"
         fi
     else
-        echo "    $(_green "✓") wrapper    active"
+        echo "    $(_red "✗") symlinks   ${_link_ok}/${_link_total} valid"
     fi
 
     # ── telemetry shield (instant) ──
-    local wrapper_file="$CAC_DIR/bin/claude"
+    local wrapper_file="$(_env_launcher_path "$current")"
     local wrapper_content=""
     [[ -f "$wrapper_file" ]] && wrapper_content=$(<"$wrapper_file")
     local telemetry_mode; telemetry_mode=$(_read "$env_dir/telemetry_mode" "stealth")
@@ -122,7 +175,7 @@ cmd_check() {
     fi
     # user_id tracking: sync from .claude.json after login (real userID wins)
     local _uid_ok=true
-    local _config_dir="${CLAUDE_CONFIG_DIR:-$ENVS_DIR/$current/.claude}"
+    local _config_dir="$ENVS_DIR/$current/.claude"
     local _cj="$_config_dir/.claude.json"
     [[ -f "$_cj" ]] || _cj="$HOME/.claude.json"
     if [[ -f "$_cj" ]]; then
@@ -300,6 +353,8 @@ cmd_check() {
         echo "    $(_dim "TZ")         $(_read "$env_dir/tz" "—")"
         echo "    $(_dim "LANG")       $(_read "$env_dir/lang" "—")"
         echo "    $(_dim "env")        ${env_dir/#$HOME/~}/.claude/"
+        echo "    $(_dim "claude")     ~/.claude -> $(readlink "$HOME/.claude" 2>/dev/null || echo "—")"
+        echo "    $(_dim "binary")     ${env_dir/#$HOME/~}/bin/claude -> $(readlink "$env_dir/bin/claude" 2>/dev/null || echo "—")"
         echo
         echo "  $(_bold "Telemetry") ($telemetry_mode mode)"
         if [[ "$telemetry_mode" == "transparent" ]]; then

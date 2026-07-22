@@ -13,7 +13,7 @@ cac operates at the **device fingerprint layer**. Every environment gets:
 | Hardware UUID isolation | Spoofs `ioreg` / `machine-id` / `wmic` output so each env reports a different UUID |
 | Hostname / MAC isolation | Shell shims + Node.js hooks replace `os.hostname()` and `os.networkInterfaces()` |
 | Telemetry blocking | DNS guard + fetch interception + 12 env-var kill switches stop all reporting to Datadog, 1P event logging, and GrowthBook |
-| Config isolation | Each env has its own `CLAUDE_CONFIG_DIR` — sessions, settings, memory are fully separated |
+| Config isolation | `~/.claude` points to the active env — sessions, settings, memory are fully separated |
 | mTLS client certificates | Per-environment client certs for an additional TLS identity layer |
 
 When you run `cac env check`, you can verify all of these are active.
@@ -46,7 +46,7 @@ cac's device fingerprint layer was never involved in these decisions. Running `c
 - [ ] Run `cac env check` — confirm UUID, hostname, MAC, and telemetry status all pass
 - [ ] Check if the proxy IP is a residential or data-center IP (`ipinfo.io`, `scamalytics.com`)
 - [ ] Check if the same payment method was used on a previously banned account
-- [ ] Check if any other device is sharing the same environment (same `CLAUDE_CONFIG_DIR`) or the same proxy simultaneously
+- [ ] Check if any other device is sharing the same environment (same active `~/.claude` target) or the same proxy simultaneously
 - [ ] Check `cac env check` output for any `WARN` or `FAIL` items
 
 ## Shared environments and multi-device use

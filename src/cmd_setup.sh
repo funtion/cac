@@ -39,22 +39,31 @@ _ensure_initialized() {
     rm -f "$CAC_DIR/blocked_hosts" 2>/dev/null || true
     _write_blocked_hosts 2>/dev/null || true
 
-    # Patch all existing envs: ensure DISABLE_AUTOUPDATER=1 in settings.json
+    # Patch all existing envs: ensure DISABLE_AUTOUPDATER=1 and remove legacy
+    # CLAUDE_CONFIG_DIR dependency from statusline command.
     local _sf
     for _sf in "$ENVS_DIR"/*/.claude/settings.json; do
         [[ -f "$_sf" ]] || continue
-        grep -q '"DISABLE_AUTOUPDATER"' "$_sf" 2>/dev/null && continue
         python3 - "$_sf" << 'PYEOF' 2>/dev/null || true
 import json, sys
 path = sys.argv[1]
 with open(path) as f:
     d = json.load(f)
-if d.get('env', {}).get('DISABLE_AUTOUPDATER') == '1':
-    sys.exit(0)
-d.setdefault('env', {})['DISABLE_AUTOUPDATER'] = '1'
-with open(path, 'w') as f:
-    json.dump(d, f, indent=2)
-    f.write('\n')
+changed = False
+status = d.get('statusLine')
+if isinstance(status, dict) and status.get('command') == 'bash $CLAUDE_CONFIG_DIR/statusline-command.sh':
+    status['command'] = 'bash $HOME/.claude/statusline-command.sh'
+    changed = True
+elif isinstance(status, dict) and status.get('command') == 'bash ${CLAUDE_CONFIG_DIR}/statusline-command.sh':
+    status['command'] = 'bash $HOME/.claude/statusline-command.sh'
+    changed = True
+if d.get('env', {}).get('DISABLE_AUTOUPDATER') != '1':
+    d.setdefault('env', {})['DISABLE_AUTOUPDATER'] = '1'
+    changed = True
+if changed:
+    with open(path, 'w') as f:
+        json.dump(d, f, indent=2)
+        f.write('\n')
 PYEOF
     done
 
@@ -65,23 +74,16 @@ PYEOF
     # Keep .latest pointing to highest installed version
     _update_latest 2>/dev/null || true
 
-    # Re-generate wrapper on version upgrade
-    if [[ -f "$CAC_DIR/bin/claude" ]]; then
-        local _wrapper_ver
-        _wrapper_ver=$(grep 'CAC_WRAPPER_VER=' "$CAC_DIR/bin/claude" 2>/dev/null | sed 's/.*CAC_WRAPPER_VER=//' | tr -d '[:space:]' || true)
-        if [[ "$_wrapper_ver" != "$CAC_VERSION" ]]; then
-            _write_wrapper
-        fi
-        return 0
-    fi
-
     # Find real claude (system-installed or managed)
     local real_claude
     real_claude=$(_find_real_claude)
     if [[ -z "$real_claude" ]]; then
-        local latest_ver; latest_ver=$(_read "$VERSIONS_DIR/.latest" "")
-        if [[ -n "$latest_ver" ]]; then
-            real_claude="$VERSIONS_DIR/$latest_ver/claude"
+        real_claude=$(_read "$CAC_DIR/real_claude" "")
+        if [[ -z "$real_claude" || ! -x "$real_claude" ]]; then
+            local latest_ver; latest_ver=$(_read "$VERSIONS_DIR/.latest" "")
+            if [[ -n "$latest_ver" ]]; then
+                real_claude="$VERSIONS_DIR/$latest_ver/claude"
+            fi
         fi
     fi
     if [[ -n "$real_claude" ]] && [[ -x "$real_claude" ]]; then
@@ -89,6 +91,7 @@ PYEOF
     fi
 
     local os; os=$(_detect_os)
+    _sync_all_env_launchers 2>/dev/null || true
     _write_wrapper
 
     # Shims

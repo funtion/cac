@@ -10,7 +10,7 @@ cac applies multiple independent protection layers. Each works on its own — to
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  Layer 7: CLAUDE_CONFIG_DIR isolation            │  Sessions, settings, memory
+│  Layer 7: ~/.claude symlink isolation            │  Sessions, settings, memory
 │  Layer 6: mTLS client certificates               │  Per-env cert signed by CA
 │  Layer 5: Health check bypass                    │  In-process Node.js intercept
 │  Layer 4: DNS guard + fetch interception         │  Block telemetry domains
@@ -101,7 +101,7 @@ Each environment has a client certificate signed by cac's CA (`~/.cac/ca/ca_cert
 
 ## Layer 7: Config isolation
 
-`CLAUDE_CONFIG_DIR` points to `~/.cac/envs/<name>/.claude/` instead of `~/.claude/`. This isolates:
+`~/.claude` points to `~/.cac/envs/<name>/.claude/` via symlink, so Claude Code and external tools keep using the default config path. This isolates:
 
 - Auth tokens (OAuth / session)
 - Settings (`settings.json`)

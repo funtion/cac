@@ -10,7 +10,7 @@ cac 应用多层独立的防护机制。每层独立运作——组合在一起�
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  第 7 层：CLAUDE_CONFIG_DIR 隔离                  │  会话、设置、记忆
+│  第 7 层：~/.claude 符号链接隔离                  │  会话、设置、记忆
 │  第 6 层：mTLS 客户端证书                          │  每环境 CA 签发的证书
 │  第 5 层：健康检查绕过                             │  进程内 Node.js 拦截
 │  第 4 层：DNS 守卫 + fetch 拦截                    │  拦截遥测域名
@@ -101,7 +101,7 @@ cac 的 `dns-guard.js` 在进程内拦截对该 URL 的 `https.request` 和 `fet
 
 ## 第 7 层：配置隔离
 
-`CLAUDE_CONFIG_DIR` 指向 `~/.cac/envs/<name>/.claude/` 而非 `~/.claude/`。这隔离了：
+`~/.claude` 通过符号链接指向 `~/.cac/envs/<name>/.claude/`，Claude Code 和外部工具都继续使用默认配置路径。这隔离了：
 
 - 认证令牌（OAuth / 会话）
 - 设置（`settings.json`）

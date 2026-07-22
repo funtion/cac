@@ -29,7 +29,7 @@ claude
 | `hooks/` | 符号链接 | 复制 |
 | `skills/` | 符号链接 | 复制 |
 | `plugins/` | 符号链接 | 复制 |
-| `CLAUDE.md` | 符号链接 | 复制 + 自动追加 cac 指令 |
+| `CLAUDE.md` | 符号链接 | 复制 |
 | `settings.json` | 通过 `settings.override.json` 分层合并 | 通过 `settings.override.json` 分层合并 |
 
 以下内容**不会**被继承（每个环境独立生成）：
@@ -59,10 +59,6 @@ cac env create work --clone --no-link
 资源被**复制**到新环境。修改源不影响它，反之亦然。
 
 适合：创建一个需要独立定制的环境。
-
-<Tip>
-使用 `--no-link` 时，cac 会自动在复制的 `CLAUDE.md` 末尾追加 cac 专属指令（"CAC Meta Prompt"）。符号链接模式下会跳过这步，因为修改符号链接的文件会影响源文件。
-</Tip>
 
 ## 从其他环境克隆
 

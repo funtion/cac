@@ -6,19 +6,18 @@ icon: "shield"
 
 ## 包装器
 
-当你运行 `claude` 时，实际执行的是 cac 的包装器 `~/.cac/bin/claude`（它在 `PATH` 中排在最前面）。包装器的工作流程：
+当你运行 `claude` 时，`PATH` 仍会解析到 Claude 的标准入口 `~/.local/bin/claude`。cac 保持这个对外路径不变，只把内部符号链接重指向当前环境启动器。启动器的工作流程：
 
 ```
 claude（用户输入）
   │
   ▼
-~/.cac/bin/claude（包装器）
+~/.local/bin/claude -> ~/.cac/bin/claude -> ~/.cac/envs/<name>/launcher/claude
   │
-  ├─ 读取 ~/.cac/current → 活跃环境名称
   ├─ 读取 ~/.cac/envs/<name>/ → 身份、代理、版本
   │
-  ├─ 设置 CLAUDE_CONFIG_DIR → 隔离的 .claude 目录
-  ├─ 解析版本化二进制文件 → ~/.cac/versions/<ver>/claude
+  ├─ 确保 ~/.claude -> ~/.cac/envs/<name>/.claude
+  ├─ 执行锁定版本符号链接 → ~/.cac/envs/<name>/bin/claude
   │
   ├─ [如有代理] 预检 TCP 连接
   ├─ [如有代理] 注入 HTTPS_PROXY、HTTP_PROXY、ALL_PROXY
@@ -36,7 +35,7 @@ claude（用户输入）
   ├─ [如有代理 + TUN] 启动自动中继（自动绕过 TUN）
   │
   ▼
-~/.cac/versions/<ver>/claude（真正的二进制文件）
+~/.cac/envs/<name>/bin/claude -> ~/.cac/versions/<ver>/claude
 ```
 
 ## 指纹伪装层
@@ -100,10 +99,12 @@ claude（用户输入）
 
 ## 配置隔离
 
-`CLAUDE_CONFIG_DIR` 被设置为 `~/.cac/envs/<name>/.claude/`。这意味着：
+`~/.claude` 通过符号链接指向 `~/.cac/envs/<name>/.claude/`。Claude Code 和外部工具都继续使用默认配置路径。这样：
 - 会话按环境隔离
 - 设置按环境隔离
 - 项目记忆按环境隔离
 - 认证令牌按环境隔离
 
 使用 `cac work` 和 `cac personal` 切换环境，会给你完全独立的 Claude Code 体验。
+
+cac 第一次接管标准路径时，会把原宿主配置移动到 `~/.cac/host/.claude`。运行 `cac stop` 会把 `~/.claude` 恢复到宿主配置。

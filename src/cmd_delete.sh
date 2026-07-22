@@ -12,6 +12,7 @@ cmd_delete() {
     # stop relay processes and routes
     if [[ -d "$CAC_DIR" ]]; then
         _relay_stop 2>/dev/null || true
+        _restore_host_claude_files
 
         # stop docker port-forward processes
         if [[ -d /tmp/cac-docker-ports ]]; then

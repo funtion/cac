@@ -16,12 +16,16 @@ icon: "folder-tree"
 │
 ├── envs/                         # 环境
 │   └── work/
-│       ├── .claude/              # 隔离的 CLAUDE_CONFIG_DIR
+│       ├── .claude/              # 隔离配置，通过 ~/.claude 暴露
 │       │   ├── settings.json
 │       │   ├── statusline-command.sh
-│       │   ├── CLAUDE.md
+│       │   ├── CLAUDE.md             # 可选的用户/项目记忆
 │       │   ├── projects/
 │       │   └── ...
+│       ├── launcher/
+│       │   └── claude            # 环境启动器
+│       ├── bin/
+│       │   └── claude -> ~/.cac/versions/2.1.81/claude
 │       ├── proxy                 # 代理 URL（可选）
 │       ├── version               # 锁定的 Claude Code 版本
 │       ├── type                  # "local" 或 "container"
@@ -37,7 +41,12 @@ icon: "folder-tree"
 │       └── client_key.pem        # mTLS 私钥
 │
 ├── bin/
-│   └── claude                    # 包装器脚本（拦截所有 claude 调用）
+│   └── claude -> ~/.cac/envs/work/launcher/claude
+│
+├── host/
+│   ├── .claude                   # 被移开的原宿主配置
+│   ├── .claude.json              # 被移开的原宿主元数据
+│   └── bin/claude                # 原 ~/.local/bin/claude 入口
 │
 ├── shim-bin/                     # 设备身份代理脚本
 │   ├── hostname                  # 返回伪装的主机名

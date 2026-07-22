@@ -113,6 +113,61 @@ _get_real_cmd() {
         command -v "$cmd" 2>/dev/null || true
 }
 
+_absolute_link_target() {
+    local path="$1" target="$2"
+    if [[ "$target" != /* ]]; then
+        local dir
+        dir="$(cd "$(dirname "$path")" 2>/dev/null && pwd)" || return 1
+        target="$dir/$target"
+    fi
+    printf '%s\n' "$target"
+}
+
+_resolve_link_chain() {
+    local path="$1" target="" depth=0
+    while [[ -L "$path" ]] && [[ $depth -lt 20 ]]; do
+        target=$(readlink "$path" 2>/dev/null || true)
+        [[ -n "$target" ]] || break
+        path=$(_absolute_link_target "$path" "$target") || break
+        (( depth++ )) || true
+    done
+    printf '%s\n' "$path"
+}
+
+_is_cac_managed_claude_entry() {
+    local path="$1"
+    case "$path" in
+        "$CAC_DIR/bin/claude"|"$CAC_DIR/bin/claude.inactive"|"$CAC_DIR/envs/"*/launcher/claude)
+            return 0
+            ;;
+    esac
+
+    if [[ -L "$path" ]]; then
+        local target
+        target=$(readlink "$path" 2>/dev/null || true)
+        if [[ -n "$target" ]]; then
+            target=$(_absolute_link_target "$path" "$target" 2>/dev/null || echo "$target")
+            case "$target" in
+                "$CAC_DIR/bin/claude"|"$CAC_DIR/bin/claude.inactive"|"$CAC_DIR/envs/"*/launcher/claude)
+                    return 0
+                    ;;
+            esac
+        fi
+    fi
+
+    if [[ -f "$path" ]]; then
+        local header
+        header=$(sed -n '1,8p' "$path" 2>/dev/null || true)
+        case "$header" in
+            *CAC_LOCAL_BIN_SHIM=1*|*CAC_WRAPPER_VER=*)
+                return 0
+                ;;
+        esac
+    fi
+
+    return 1
+}
+
 # host:port:user:pass → http://user:pass@host:port
 # socks5://host:port:user:pass → socks5://user:pass@host:port
 # or pass a standard URL directly (http://, https://, socks5://)
@@ -224,6 +279,35 @@ _auto_detect_proxy() {
 
 _current_env()  { _read "$CAC_DIR/current"; }
 _env_dir()      { echo "$ENVS_DIR/$1"; }
+_host_claude_dir() { echo "$CAC_DIR/host/.claude"; }
+_host_claude_json() { echo "$CAC_DIR/host/.claude.json"; }
+_standard_claude_bin() { echo "$HOME/.local/bin/claude"; }
+_host_claude_bin() { echo "$CAC_DIR/host/bin/claude"; }
+
+_is_cac_claude_dir_target() {
+    local target="$1"
+    case "$target" in
+        "$ENVS_DIR"/*/.claude|"$CAC_DIR"/envs/*/.claude) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+_is_cac_claude_json_target() {
+    local target="$1"
+    case "$target" in
+        "$ENVS_DIR"/*/.claude/.claude.json|"$CAC_DIR"/envs/*/.claude/.claude.json) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+_resolve_host_claude_dir() {
+    local host; host=$(_host_claude_dir)
+    if [[ -d "$host" || -L "$host" ]]; then
+        echo "$host"
+    elif [[ -d "$HOME/.claude" && ! -L "$HOME/.claude" ]]; then
+        echo "$HOME/.claude"
+    fi
+}
 
 # ── Version management helpers ────────────────────────────────────
 
@@ -362,8 +446,24 @@ _require_env() {
 }
 
 _find_real_claude() {
-    PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "$CAC_DIR/bin" | tr '\n' ':') \
-        command -v claude 2>/dev/null || true
+    local dir candidate resolved
+    local IFS=:
+    for dir in $PATH; do
+        [[ -n "$dir" ]] || dir="."
+        case "$dir" in
+            "$CAC_DIR/bin"|"$CAC_DIR/bin/"|"$CAC_DIR/shim-bin"|"$CAC_DIR/shim-bin/")
+                continue
+                ;;
+        esac
+        candidate="$dir/claude"
+        [[ -e "$candidate" || -L "$candidate" ]] || continue
+        [[ -x "$candidate" ]] || continue
+        _is_cac_managed_claude_entry "$candidate" && continue
+        resolved=$(_resolve_link_chain "$candidate")
+        printf '%s\n' "$resolved"
+        return 0
+    done
+    return 0
 }
 
 _detect_rc_file() {
@@ -418,21 +518,20 @@ _write_path_to_rc() {
     local rc_file="${1:-$(_detect_rc_file)}"
     if [[ -z "$rc_file" ]]; then
         echo "  $(_yellow '⚠') shell config file not found, please add PATH manually:"
-        echo '    export PATH="$HOME/bin:$PATH"'
-        echo '    export PATH="$HOME/.cac/bin:$PATH"'
+        echo '    export PATH="$HOME/.local/bin:$HOME/bin:$PATH"'
         return 0
     fi
 
     mkdir -p "$(dirname "$rc_file")"
     [[ -f "$rc_file" ]] || touch "$rc_file"
 
-    if grep -q '# >>> cac >>>' "$rc_file" 2>/dev/null; then
+    if grep -q '# >>> cac' "$rc_file" 2>/dev/null && ! grep -q '\.cac/bin' "$rc_file" 2>/dev/null; then
         echo "  ✓ PATH already exists in $rc_file, skipping"
         return 0
     fi
 
-    # Compat: remove old format if present
-    if ! _is_fish_rc "$rc_file" && grep -q '\.cac/bin' "$rc_file" 2>/dev/null; then
+    # Compat: replace the old cac-specific PATH entry with standard user bins.
+    if grep -q '# >>> cac' "$rc_file" 2>/dev/null || grep -q '\.cac/bin' "$rc_file" 2>/dev/null; then
         _remove_path_from_rc "$rc_file"
     fi
 
@@ -440,13 +539,8 @@ _write_path_to_rc() {
         cat >> "$rc_file" << 'CACEOF'
 
 # >>> cac — Claude Code Cloak >>>
-fish_add_path --move --path "$HOME/.cac/bin" >/dev/null 2>&1
-function cac
-    command cac $argv
-    set -l _rc $status
-    fish_add_path --move --path "$HOME/.cac/bin" >/dev/null 2>&1
-    return $_rc
-end
+fish_add_path --move --path "$HOME/bin" >/dev/null 2>&1
+fish_add_path --move --path "$HOME/.local/bin" >/dev/null 2>&1
 # <<< cac — Claude Code Cloak <<<
 CACEOF
         echo "  ✓ PATH written to $rc_file"
@@ -456,18 +550,8 @@ CACEOF
     cat >> "$rc_file" << 'CACEOF'
 
 # >>> cac — Claude Code Cloak >>>
-PATH=$(echo "$PATH" | tr ':' '\n' | grep -v '\.cac/bin' | tr '\n' ':' | sed 's/:$//')
-export PATH="$HOME/.cac/bin:$PATH"
-cac() {
-    local _cac_bin
-    _cac_bin=$(PATH=$(echo "$PATH" | tr ':' '\n' | grep -v '\.cac/bin' | tr '\n' ':') command -v cac 2>/dev/null)
-    [[ -z "$_cac_bin" ]] && { echo "[cac] error: cac binary not found in PATH" >&2; return 1; }
-    command "$_cac_bin" "$@"
-    local _rc=$?
-    PATH=$(echo "$PATH" | tr ':' '\n' | grep -v '\.cac/bin' | tr '\n' ':' | sed 's/:$//')
-    export PATH="$HOME/.cac/bin:$PATH"
-    return $_rc
-}
+PATH=$(echo "$PATH" | tr ':' '\n' | grep -v -e "^$HOME/.local/bin$" -e "^$HOME/bin$" | tr '\n' ':' | sed 's/:$//')
+export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
 # <<< cac — Claude Code Cloak <<<
 CACEOF
     echo "  ✓ PATH written to $rc_file"
@@ -501,7 +585,7 @@ _remove_path_from_rc() {
 
 _update_claude_json_user_id() {
     local user_id="$1"
-    local config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+    local config_dir="$HOME/.claude"
     local claude_json="$config_dir/.claude.json"
     [[ -f "$claude_json" ]] || claude_json="$HOME/.claude.json"
     [[ -f "$claude_json" ]] || return 0
@@ -1147,7 +1231,7 @@ _write_env_settings() {
   "skipDangerousModePermissionPrompt": true,
   "statusLine": {
     "type": "command",
-    "command": "bash $CLAUDE_CONFIG_DIR/statusline-command.sh"
+    "command": "bash $HOME/.claude/statusline-command.sh"
   },
   "env": {
     "DISABLE_AUTOUPDATER": "1"
@@ -1156,41 +1240,323 @@ _write_env_settings() {
 SETTINGS_EOF
 }
 
-# write CAC Meta Prompt to env .claude/CLAUDE.md
-# Usage: _write_env_claude_md <config_dir> <env_name> [--append]
-_write_env_claude_md() {
-    local config_dir="$1"
-    local env_name="$2"
-    local _meta
-    _meta=$(cat << CLAUDEMD_EOF
+_env_launcher_path() {
+    echo "$ENVS_DIR/$1/launcher/claude"
+}
 
-# cac managed environment
+_env_version_link_path() {
+    echo "$ENVS_DIR/$1/bin/claude"
+}
 
-This Claude Code instance is managed by **cac** (Claude Code Cloak).
+_env_config_link_path() {
+    echo "$ENVS_DIR/$1/.claude"
+}
 
-- Environment name: \`$env_name\`
-- Config directory: \`CLAUDE_CONFIG_DIR\` is set to this \`.claude/\` folder
-- Your settings, credentials, and sessions are isolated per-environment
+_env_claude_json_path() {
+    echo "$ENVS_DIR/$1/.claude/.claude.json"
+}
 
-Useful commands:
-- \`cac env ls\` — list all environments and their config paths
-- \`cac env check\` — verify current environment health
-- \`cac <name>\` — switch to another environment
-CLAUDEMD_EOF
-    )
-    if [[ "${3:-}" == "--append" ]]; then
-        printf '\n%s\n' "$_meta" >> "$config_dir/CLAUDE.md"
-    else
-        printf '%s\n' "$_meta" > "$config_dir/CLAUDE.md"
+_adopt_claude_home_dir() {
+    local live="$HOME/.claude"
+    local host; host=$(_host_claude_dir)
+
+    if [[ -L "$live" ]]; then
+        local target; target=$(readlink "$live" 2>/dev/null || true)
+        _is_cac_claude_dir_target "$target" && return 0
+        [[ "$target" == "$(_host_claude_dir)" ]] && return 0
+    fi
+    [[ -e "$live" || -L "$live" ]] || return 0
+
+    mkdir -p "$(dirname "$host")"
+    local dest="$host"
+    if [[ -e "$dest" || -L "$dest" ]]; then
+        dest="$host.$(date +%Y%m%d%H%M%S)"
+    fi
+    mv "$live" "$dest" || _die "cannot move existing ~/.claude to ${dest/#$HOME/~}"
+}
+
+_adopt_claude_json_file() {
+    local live="$HOME/.claude.json"
+    local host; host=$(_host_claude_json)
+
+    if [[ -L "$live" ]]; then
+        local target; target=$(readlink "$live" 2>/dev/null || true)
+        _is_cac_claude_json_target "$target" && return 0
+        [[ "$target" == "$(_host_claude_json)" ]] && return 0
+    fi
+    [[ -e "$live" || -L "$live" ]] || return 0
+
+    mkdir -p "$(dirname "$host")"
+    local dest="$host"
+    if [[ -e "$dest" || -L "$dest" ]]; then
+        dest="$host.$(date +%Y%m%d%H%M%S)"
+    fi
+    mv "$live" "$dest" || _die "cannot move existing ~/.claude.json to ${dest/#$HOME/~}"
+}
+
+_link_claude_home_dir() {
+    local name="$1"
+    local target="$(_env_config_link_path "$name")"
+    local live="$HOME/.claude"
+
+    [[ -d "$target" ]] || return 1
+    if [[ -L "$live" ]] && [[ "$(readlink "$live" 2>/dev/null || true)" == "$(_host_claude_dir)" ]]; then
+        rm -f "$live"
+    fi
+    _adopt_claude_home_dir
+
+    if [[ -L "$live" ]]; then
+        local current; current=$(readlink "$live" 2>/dev/null || true)
+        [[ "$current" == "$target" ]] && return 0
+        if _is_cac_claude_dir_target "$current"; then
+            rm -f "$live"
+        else
+            _die "~/.claude is a non-cac symlink; move it manually before activating cac"
+        fi
+    elif [[ -e "$live" ]]; then
+        _die "~/.claude exists and is not managed by cac; move it manually before activating cac"
+    fi
+
+    ln -s "$target" "$live"
+}
+
+_link_claude_json_file() {
+    local name="$1"
+    local target="$(_env_claude_json_path "$name")"
+    local live="$HOME/.claude.json"
+
+    mkdir -p "$(dirname "$target")"
+    if [[ -L "$live" ]] && [[ "$(readlink "$live" 2>/dev/null || true)" == "$(_host_claude_json)" ]]; then
+        rm -f "$live"
+    fi
+    _adopt_claude_json_file
+
+    if [[ -L "$live" ]]; then
+        local current; current=$(readlink "$live" 2>/dev/null || true)
+        [[ "$current" == "$target" ]] && return 0
+        if _is_cac_claude_json_target "$current"; then
+            rm -f "$live"
+        else
+            _die "~/.claude.json is a non-cac symlink; move it manually before activating cac"
+        fi
+    elif [[ -e "$live" ]]; then
+        _die "~/.claude.json exists and is not managed by cac; move it manually before activating cac"
+    fi
+
+    ln -s "$target" "$live"
+}
+
+_sync_standard_claude_symlinks() {
+    local name="$1"
+    _link_claude_home_dir "$name"
+    _link_claude_json_file "$name"
+}
+
+_restore_host_claude_symlinks() {
+    _restore_host_claude_bin
+
+    local live="$HOME/.claude"
+    if [[ -L "$live" ]]; then
+        local target; target=$(readlink "$live" 2>/dev/null || true)
+        if _is_cac_claude_dir_target "$target"; then
+            rm -f "$live"
+            local host; host=$(_host_claude_dir)
+            if [[ -e "$host" || -L "$host" ]]; then
+                ln -s "$host" "$live"
+            fi
+        fi
+    fi
+
+    local json_live="$HOME/.claude.json"
+    if [[ -L "$json_live" ]]; then
+        local json_target; json_target=$(readlink "$json_live" 2>/dev/null || true)
+        if _is_cac_claude_json_target "$json_target"; then
+            rm -f "$json_live"
+            local json_host; json_host=$(_host_claude_json)
+            if [[ -e "$json_host" || -L "$json_host" ]]; then
+                ln -s "$json_host" "$json_live"
+            fi
+        fi
     fi
 }
 
-_write_wrapper() {
+_restore_host_claude_files() {
+    _restore_host_claude_bin
+
+    local live="$HOME/.claude"
+    if [[ -L "$live" ]]; then
+        local target; target=$(readlink "$live" 2>/dev/null || true)
+        if _is_cac_claude_dir_target "$target" || [[ "$target" == "$(_host_claude_dir)" ]]; then
+            rm -f "$live"
+        fi
+    fi
+    local host; host=$(_host_claude_dir)
+    if [[ ! -e "$live" && ! -L "$live" && ( -e "$host" || -L "$host" ) ]]; then
+        mv "$host" "$live" 2>/dev/null || true
+    fi
+
+    local json_live="$HOME/.claude.json"
+    if [[ -L "$json_live" ]]; then
+        local json_target; json_target=$(readlink "$json_live" 2>/dev/null || true)
+        if _is_cac_claude_json_target "$json_target" || [[ "$json_target" == "$(_host_claude_json)" ]]; then
+            rm -f "$json_live"
+        fi
+    fi
+    local json_host; json_host=$(_host_claude_json)
+    if [[ ! -e "$json_live" && ! -L "$json_live" && ( -e "$json_host" || -L "$json_host" ) ]]; then
+        mv "$json_host" "$json_live" 2>/dev/null || true
+    fi
+}
+
+_sync_env_version_symlink() {
+    local name="$1"
+    local ver="${2:-}"
+    local env_dir="$ENVS_DIR/$name"
+    [[ -d "$env_dir" ]] || return 0
+
+    [[ -n "$ver" ]] || ver=$(_read "$env_dir/version" "")
+    [[ -n "$ver" ]] || return 0
+
+    local real="$(_version_binary "$ver")"
+    local link="$(_env_version_link_path "$name")"
+    mkdir -p "$(dirname "$link")"
+    if [[ ! -x "$real" ]]; then
+        rm -f "$link"
+        return 0
+    fi
+
+    local current=""
+    current=$(readlink "$link" 2>/dev/null || true)
+    [[ "$current" == "$real" ]] && return 0
+    rm -f "$link"
+    ln -s "$real" "$link"
+}
+
+_link_global_claude() {
+    local name="$1"
+    local target="$(_env_launcher_path "$name")"
     mkdir -p "$CAC_DIR/bin"
-    cat > "$CAC_DIR/bin/claude" << 'WRAPPER_EOF'
+    [[ -x "$target" ]] || return 1
+    local current=""
+    current=$(readlink "$CAC_DIR/bin/claude" 2>/dev/null || true)
+    [[ "$current" == "$target" ]] && return 0
+    rm -f "$CAC_DIR/bin/claude"
+    ln -s "$target" "$CAC_DIR/bin/claude"
+}
+
+_link_standard_claude_bin() {
+    local shim; shim=$(_standard_claude_bin)
+    local host; host=$(_host_claude_bin)
+    local target="$CAC_DIR/bin/claude"
+    mkdir -p "$(dirname "$shim")" 2>/dev/null || return 0
+
+    if [[ -L "$shim" ]]; then
+        local current
+        current=$(readlink "$shim" 2>/dev/null || true)
+        current=$(_absolute_link_target "$shim" "$current" 2>/dev/null || echo "$current")
+        [[ "$current" == "$target" ]] && return 0
+    fi
+
+    if [[ -e "$shim" || -L "$shim" ]]; then
+        if _is_cac_managed_claude_entry "$shim"; then
+            rm -f "$shim" 2>/dev/null || return 0
+        else
+            mkdir -p "$(dirname "$host")"
+            [[ ! -e "$host" && ! -L "$host" ]] || _die "saved Claude entry already exists at ${host/#$HOME/~}"
+            mv "$shim" "$host" || _die "cannot preserve existing ${shim/#$HOME/~}"
+        fi
+    fi
+
+    ln -s "$target" "$shim" 2>/dev/null || return 0
+}
+
+_restore_host_claude_bin() {
+    local live; live=$(_standard_claude_bin)
+    local host; host=$(_host_claude_bin)
+
+    if _is_cac_managed_claude_entry "$live"; then
+        rm -f "$live"
+    fi
+    if [[ ! -e "$live" && ! -L "$live" && ( -e "$host" || -L "$host" ) ]]; then
+        mkdir -p "$(dirname "$live")"
+        mv "$host" "$live" 2>/dev/null || true
+    fi
+}
+
+_write_inactive_claude() {
+    mkdir -p "$CAC_DIR/bin"
+    local out="$CAC_DIR/bin/claude.inactive"
+    cat > "$out" << 'INACTIVE_WRAPPER_EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 # CAC_WRAPPER_VER=__CAC_VER__
+
+CAC_DIR="$HOME/.cac"
+
+if [[ -f "$CAC_DIR/stopped" ]]; then
+    _real=$(tr -d '[:space:]' < "$CAC_DIR/real_claude" 2>/dev/null || true)
+    [[ -x "$_real" ]] && exec "$_real" "$@"
+    echo "[cac] error: real claude not found, run 'cac claude install latest'" >&2; exit 1
+fi
+
+echo "[cac] error: no active environment, run 'cac env create <name>' or 'cac <name>'" >&2
+exit 1
+INACTIVE_WRAPPER_EOF
+    local _tmp="$out.tmp"
+    sed "s/__CAC_VER__/$CAC_VERSION/" "$out" > "$_tmp" && mv "$_tmp" "$out"
+    chmod +x "$out"
+    local current=""
+    current=$(readlink "$CAC_DIR/bin/claude" 2>/dev/null || true)
+    [[ "$current" == "$out" ]] && return 0
+    rm -f "$CAC_DIR/bin/claude"
+    ln -s "$out" "$CAC_DIR/bin/claude"
+}
+
+_sync_all_env_launchers() {
+    local env_dir name
+    for env_dir in "$ENVS_DIR"/*/; do
+        [[ -d "$env_dir" ]] || continue
+        name=$(basename "$env_dir")
+        _write_env_launcher "$name"
+        _sync_env_version_symlink "$name"
+    done
+}
+
+_write_wrapper() {
+    local name="${1:-$(_current_env)}"
+    if [[ -z "$name" ]] || [[ ! -d "$ENVS_DIR/$name" ]]; then
+        _write_inactive_claude
+        return 0
+    fi
+
+    _write_env_launcher "$name"
+    _sync_env_version_symlink "$name"
+    _sync_standard_claude_symlinks "$name"
+    _link_global_claude "$name"
+    [[ -f "$CAC_DIR/stopped" ]] || _link_standard_claude_bin
+}
+
+_write_env_launcher() {
+    local name="$1"
+    local env_dir="$ENVS_DIR/$name"
+    [[ -d "$env_dir" ]] || return 0
+
+    local out="$(_env_launcher_path "$name")"
+    mkdir -p "$(dirname "$out")"
+
+    local current_ver=""
+    if [[ -f "$out" ]]; then
+        current_ver=$(grep 'CAC_WRAPPER_VER=' "$out" 2>/dev/null | sed 's/.*CAC_WRAPPER_VER=//' | tr -d '[:space:]' || true)
+    fi
+    if [[ "$current_ver" == "$CAC_VERSION" ]]; then
+        return 0
+    fi
+
+    cat > "$out" << 'WRAPPER_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+# CAC_WRAPPER_VER=__CAC_VER__
+# CAC_ENV_NAME=__CAC_ENV_NAME__
 
 CAC_DIR="$HOME/.cac"
 ENVS_DIR="$CAC_DIR/envs"
@@ -1202,17 +1568,40 @@ if [[ -f "$CAC_DIR/stopped" ]]; then
     echo "[cac] error: real claude not found, reinstall with 'npm i -g claude-cac'" >&2; exit 1
 fi
 
-# read current environment
-if [[ ! -f "$CAC_DIR/current" ]]; then
-    echo "[cac] error: no active environment, run 'cac <name>'" >&2; exit 1
-fi
-_name=$(tr -d '[:space:]' < "$CAC_DIR/current")
+_name="__CAC_ENV_NAME__"
 _env_dir="$ENVS_DIR/$_name"
 [[ -d "$_env_dir" ]] || { echo "[cac] error: environment '$_name' not found" >&2; exit 1; }
 
-# Isolated .claude config directory
+# Standard Claude config path. cac keeps ~/.claude as a symlink to this
+# launcher's environment, but falls back to the env directory if a user
+# replaced the symlink manually.
+_std_claude_dir="$HOME/.claude"
+if [[ -L "$_std_claude_dir" ]]; then
+    _std_target=$(readlink "$_std_claude_dir" 2>/dev/null || true)
+    if [[ "$_std_target" != "$_env_dir/.claude" && "$_std_target" == "$CAC_DIR"/envs/*/.claude ]]; then
+        rm -f "$_std_claude_dir" 2>/dev/null || true
+        ln -s "$_env_dir/.claude" "$_std_claude_dir" 2>/dev/null || true
+    fi
+elif [[ ! -e "$_std_claude_dir" ]]; then
+    ln -s "$_env_dir/.claude" "$_std_claude_dir" 2>/dev/null || true
+fi
+if [[ -L "$HOME/.claude.json" ]]; then
+    _std_json_target=$(readlink "$HOME/.claude.json" 2>/dev/null || true)
+    if [[ "$_std_json_target" != "$_env_dir/.claude/.claude.json" && "$_std_json_target" == "$CAC_DIR"/envs/*/.claude/.claude.json ]]; then
+        rm -f "$HOME/.claude.json" 2>/dev/null || true
+        ln -s "$_env_dir/.claude/.claude.json" "$HOME/.claude.json" 2>/dev/null || true
+    fi
+elif [[ ! -e "$HOME/.claude.json" ]]; then
+    ln -s "$_env_dir/.claude/.claude.json" "$HOME/.claude.json" 2>/dev/null || true
+fi
+
+# Standard .claude config directory
 if [[ -d "$_env_dir/.claude" ]]; then
-    export CLAUDE_CONFIG_DIR="$_env_dir/.claude"
+    if [[ ! -L "$_std_claude_dir" ]] || [[ "$(readlink "$_std_claude_dir" 2>/dev/null || true)" != "$_env_dir/.claude" ]]; then
+        echo "[cac] error: ~/.claude is not linked to environment '$_name'" >&2
+        echo "[cac] hint: run 'cac $_name' to repair, or move ~/.claude manually if it is not managed by cac" >&2
+        exit 1
+    fi
     # ensure settings.json exists, prevent Claude Code fallback to ~/.claude/settings.json
     [[ -f "$_env_dir/.claude/settings.json" ]] || echo '{}' > "$_env_dir/.claude/settings.json"
     # Merge settings: if override exists, re-merge from source on each start (skip if unchanged)
@@ -1220,8 +1609,8 @@ if [[ -d "$_env_dir/.claude" ]]; then
         _src_settings=""
         if [[ -f "$_env_dir/clone_source" ]]; then
             _src_settings="$(tr -d '[:space:]' < "$_env_dir/clone_source")/settings.json"
-        elif [[ -f "$HOME/.claude/settings.json" ]]; then
-            _src_settings="$HOME/.claude/settings.json"
+        elif [[ -f "$CAC_DIR/host/.claude/settings.json" ]]; then
+            _src_settings="$CAC_DIR/host/.claude/settings.json"
         fi
         if [[ -n "$_src_settings" ]] && [[ -f "$_src_settings" ]]; then
             # Skip merge if settings.json is newer than both inputs
@@ -1447,10 +1836,17 @@ fi
 
 # exec real claude — versioned binary or system fallback
 _real=""
-if [[ -f "$_env_dir/version" ]]; then
+if [[ -x "$_env_dir/bin/claude" ]]; then
+    _real="$_env_dir/bin/claude"
+elif [[ -f "$_env_dir/version" ]]; then
     _ver=$(tr -d '[:space:]' < "$_env_dir/version")
     _ver_bin="$CAC_DIR/versions/$_ver/claude"
-    [[ -x "$_ver_bin" ]] && _real="$_ver_bin"
+    if [[ -x "$_ver_bin" ]]; then
+        _real="$_ver_bin"
+    else
+        echo "[cac] error: pinned Claude Code version $_ver not installed, run 'cac claude install $_ver'" >&2
+        exit 1
+    fi
 fi
 if [[ -z "$_real" ]] || [[ ! -x "$_real" ]]; then
     _real=$(tr -d '[:space:]' < "$CAC_DIR/real_claude")
@@ -1573,9 +1969,9 @@ _ec=$?
 set -e
 exit "$_ec"
 WRAPPER_EOF
-    local _tmp="$CAC_DIR/bin/claude.tmp"
-    sed "s/__CAC_VER__/$CAC_VERSION/" "$CAC_DIR/bin/claude" > "$_tmp" && mv "$_tmp" "$CAC_DIR/bin/claude"
-    chmod +x "$CAC_DIR/bin/claude"
+    local _tmp="$out.tmp"
+    sed "s/__CAC_VER__/$CAC_VERSION/; s/__CAC_ENV_NAME__/$name/g" "$out" > "$_tmp" && mv "$_tmp" "$out"
+    chmod +x "$out"
 }
 
 _write_ioreg_shim() {
@@ -1723,22 +2119,31 @@ _ensure_initialized() {
     rm -f "$CAC_DIR/blocked_hosts" 2>/dev/null || true
     _write_blocked_hosts 2>/dev/null || true
 
-    # Patch all existing envs: ensure DISABLE_AUTOUPDATER=1 in settings.json
+    # Patch all existing envs: ensure DISABLE_AUTOUPDATER=1 and remove legacy
+    # CLAUDE_CONFIG_DIR dependency from statusline command.
     local _sf
     for _sf in "$ENVS_DIR"/*/.claude/settings.json; do
         [[ -f "$_sf" ]] || continue
-        grep -q '"DISABLE_AUTOUPDATER"' "$_sf" 2>/dev/null && continue
         python3 - "$_sf" << 'PYEOF' 2>/dev/null || true
 import json, sys
 path = sys.argv[1]
 with open(path) as f:
     d = json.load(f)
-if d.get('env', {}).get('DISABLE_AUTOUPDATER') == '1':
-    sys.exit(0)
-d.setdefault('env', {})['DISABLE_AUTOUPDATER'] = '1'
-with open(path, 'w') as f:
-    json.dump(d, f, indent=2)
-    f.write('\n')
+changed = False
+status = d.get('statusLine')
+if isinstance(status, dict) and status.get('command') == 'bash $CLAUDE_CONFIG_DIR/statusline-command.sh':
+    status['command'] = 'bash $HOME/.claude/statusline-command.sh'
+    changed = True
+elif isinstance(status, dict) and status.get('command') == 'bash ${CLAUDE_CONFIG_DIR}/statusline-command.sh':
+    status['command'] = 'bash $HOME/.claude/statusline-command.sh'
+    changed = True
+if d.get('env', {}).get('DISABLE_AUTOUPDATER') != '1':
+    d.setdefault('env', {})['DISABLE_AUTOUPDATER'] = '1'
+    changed = True
+if changed:
+    with open(path, 'w') as f:
+        json.dump(d, f, indent=2)
+        f.write('\n')
 PYEOF
     done
 
@@ -1749,23 +2154,16 @@ PYEOF
     # Keep .latest pointing to highest installed version
     _update_latest 2>/dev/null || true
 
-    # Re-generate wrapper on version upgrade
-    if [[ -f "$CAC_DIR/bin/claude" ]]; then
-        local _wrapper_ver
-        _wrapper_ver=$(grep 'CAC_WRAPPER_VER=' "$CAC_DIR/bin/claude" 2>/dev/null | sed 's/.*CAC_WRAPPER_VER=//' | tr -d '[:space:]' || true)
-        if [[ "$_wrapper_ver" != "$CAC_VERSION" ]]; then
-            _write_wrapper
-        fi
-        return 0
-    fi
-
     # Find real claude (system-installed or managed)
     local real_claude
     real_claude=$(_find_real_claude)
     if [[ -z "$real_claude" ]]; then
-        local latest_ver; latest_ver=$(_read "$VERSIONS_DIR/.latest" "")
-        if [[ -n "$latest_ver" ]]; then
-            real_claude="$VERSIONS_DIR/$latest_ver/claude"
+        real_claude=$(_read "$CAC_DIR/real_claude" "")
+        if [[ -z "$real_claude" || ! -x "$real_claude" ]]; then
+            local latest_ver; latest_ver=$(_read "$VERSIONS_DIR/.latest" "")
+            if [[ -n "$latest_ver" ]]; then
+                real_claude="$VERSIONS_DIR/$latest_ver/claude"
+            fi
         fi
     fi
     if [[ -n "$real_claude" ]] && [[ -x "$real_claude" ]]; then
@@ -1773,6 +2171,7 @@ PYEOF
     fi
 
     local os; os=$(_detect_os)
+    _sync_all_env_launchers 2>/dev/null || true
     _write_wrapper
 
     # Shims
@@ -1906,16 +2305,17 @@ _env_cmd_create() {
 
     mkdir -p "$env_dir/.claude"
 
-    # Initialize settings.json, statusline, and CLAUDE.md
+    # Initialize settings.json and statusline
     _write_env_settings "$env_dir/.claude"
     _write_statusline_script "$env_dir/.claude"
-    _write_env_claude_md "$env_dir/.claude" "$name"
 
     # Clone config from source
     if [[ -n "$clone_source" ]]; then
         local src_claude_dir
         if [[ "$clone_source" == "host" ]]; then
-            src_claude_dir="$HOME/.claude"
+            _adopt_claude_home_dir
+            src_claude_dir=$(_resolve_host_claude_dir)
+            [[ -n "$src_claude_dir" ]] || src_claude_dir="$HOME/.claude"
         elif [[ -d "$ENVS_DIR/$clone_source/.claude" ]]; then
             src_claude_dir="$ENVS_DIR/$clone_source/.claude"
         else
@@ -1940,7 +2340,6 @@ _env_cmd_create() {
                     ln -sf "$src_claude_dir/CLAUDE.md" "$env_dir/.claude/CLAUDE.md"
                 else
                     cp "$src_claude_dir/CLAUDE.md" "$env_dir/.claude/CLAUDE.md"
-                    _write_env_claude_md "$env_dir/.claude" "$name" --append
                 fi
             fi
             if [[ -f "$src_claude_dir/settings.json" ]]; then
@@ -1976,9 +2375,7 @@ MERGE_EOF
     # Auto-activate
     echo "$name" > "$CAC_DIR/current"
     rm -f "$CAC_DIR/stopped"
-    if [[ -d "$env_dir/.claude" ]]; then
-        export CLAUDE_CONFIG_DIR="$env_dir/.claude"
-    fi
+    _write_wrapper "$name"
 
     local elapsed; elapsed=$(_timer_elapsed)
     echo
@@ -2069,11 +2466,7 @@ _env_cmd_activate() {
 
     echo "$name" > "$CAC_DIR/current"
     rm -f "$CAC_DIR/stopped"
-
-    if [[ -d "$ENVS_DIR/$name/.claude" ]]; then
-        export CLAUDE_CONFIG_DIR="$ENVS_DIR/$name/.claude"
-    fi
-
+    _write_wrapper "$name"
 
     # Relay lifecycle
     _relay_stop 2>/dev/null || true
@@ -2162,6 +2555,8 @@ _env_cmd_set() {
             local ver
             ver=$(_ensure_version_installed "$value") || exit 1
             echo "$ver" > "$env_dir/version"
+            _sync_env_version_symlink "$name" "$ver"
+            [[ "$name" == "$(_current_env)" ]] && _write_wrapper "$name"
             echo "$(_green_bold "Set") version for $(_bold "$name") → $(_cyan "$ver")"
             ;;
         telemetry)
@@ -2196,6 +2591,7 @@ _env_cmd_set() {
 
 _env_cmd_stop() {
     _relay_stop 2>/dev/null || true
+    _restore_host_claude_symlinks
     touch "$CAC_DIR/stopped"
     echo "  $(_green "✓") cac paused — claude will run without any cac injection"
     echo "  $(_dim "resume with:") $(_green "cac <name>")"
@@ -2499,20 +2895,73 @@ cmd_check() {
 
     # ── wrapper check (instant) ──
     local claude_path; claude_path="$(command -v claude 2>/dev/null || true)"
-    if [[ -z "$claude_path" ]] || [[ "$claude_path" != *"/.cac/bin/claude" ]]; then
+    local _standard_bin; _standard_bin=$(_standard_claude_bin)
+    if [[ "$claude_path" == "$_standard_bin" ]] && _is_cac_managed_claude_entry "$claude_path"; then
+        echo "    $(_green "✓") wrapper    active $(_dim "at ~/.local/bin/claude")"
+    else
         local _rc; _rc=$(_detect_rc_file)
         if [[ -n "$_rc" ]] && grep -q '# >>> cac' "$_rc" 2>/dev/null; then
-            echo "    $(_green "✓") wrapper    configured in ${_rc/#$HOME/~}"
+            echo "    $(_yellow "⚠") wrapper    configured in ${_rc/#$HOME/~}; restart the shell"
         else
             _write_path_to_rc "$_rc" >/dev/null 2>&1 || true
-            echo "    $(_green "✓") wrapper    $(_dim "added to ${_rc/#$HOME/~}")"
+            echo "    $(_yellow "⚠") wrapper    $(_dim "added standard user bins to ${_rc/#$HOME/~}")"
+        fi
+        problems+=("claude does not resolve through ~/.local/bin/claude")
+    fi
+
+    # ── symlink chain check (instant) ──
+    local _link_ok=0 _link_total=0
+    local _global_link="$CAC_DIR/bin/claude"
+    local _standard_target=""
+    _standard_target=$(readlink "$_standard_bin" 2>/dev/null || true)
+    [[ -z "$_standard_target" ]] || _standard_target=$(_absolute_link_target "$_standard_bin" "$_standard_target" 2>/dev/null || echo "$_standard_target")
+    (( _link_total++ )) || true
+    if [[ -L "$_standard_bin" ]] && [[ "$_standard_target" == "$_global_link" ]]; then
+        (( _link_ok++ )) || true
+    else
+        problems+=("~/.local/bin/claude symlink invalid")
+    fi
+
+    local _expected_launcher; _expected_launcher=$(_env_launcher_path "$current")
+    (( _link_total++ )) || true
+    if [[ -L "$_global_link" ]] && [[ "$(readlink "$_global_link" 2>/dev/null || true)" == "$_expected_launcher" ]] && [[ -x "$_expected_launcher" ]]; then
+        (( _link_ok++ )) || true
+    else
+        problems+=("~/.cac/bin/claude symlink invalid")
+    fi
+
+    if [[ -n "$ver" ]] && [[ "$ver" != "?" ]] && [[ "$ver" != "system" ]]; then
+        local _version_link; _version_link=$(_env_version_link_path "$current")
+        local _expected_bin; _expected_bin=$(_version_binary "$ver")
+        (( _link_total++ )) || true
+        if [[ -L "$_version_link" ]] && [[ "$(readlink "$_version_link" 2>/dev/null || true)" == "$_expected_bin" ]] && [[ -x "$_expected_bin" ]]; then
+            (( _link_ok++ )) || true
+        else
+            problems+=("environment Claude version symlink invalid")
+        fi
+    fi
+
+    local _expected_config="$env_dir/.claude"
+    (( _link_total++ )) || true
+    if [[ -L "$HOME/.claude" ]] && [[ "$(readlink "$HOME/.claude" 2>/dev/null || true)" == "$_expected_config" ]] && [[ -d "$_expected_config" ]]; then
+        (( _link_ok++ )) || true
+    else
+        problems+=("~/.claude symlink invalid")
+    fi
+
+    local _expected_json="$env_dir/.claude/.claude.json"
+    if [[ "$_link_ok" -eq "$_link_total" ]]; then
+        if [[ -L "$HOME/.claude.json" ]] && [[ "$(readlink "$HOME/.claude.json" 2>/dev/null || true)" == "$_expected_json" ]]; then
+            echo "    $(_green "✓") symlinks   ${_link_ok}/${_link_total} valid $(_dim "+ .claude.json")"
+        else
+            echo "    $(_green "✓") symlinks   ${_link_ok}/${_link_total} valid"
         fi
     else
-        echo "    $(_green "✓") wrapper    active"
+        echo "    $(_red "✗") symlinks   ${_link_ok}/${_link_total} valid"
     fi
 
     # ── telemetry shield (instant) ──
-    local wrapper_file="$CAC_DIR/bin/claude"
+    local wrapper_file="$(_env_launcher_path "$current")"
     local wrapper_content=""
     [[ -f "$wrapper_file" ]] && wrapper_content=$(<"$wrapper_file")
     local telemetry_mode; telemetry_mode=$(_read "$env_dir/telemetry_mode" "stealth")
@@ -2586,7 +3035,7 @@ cmd_check() {
     fi
     # user_id tracking: sync from .claude.json after login (real userID wins)
     local _uid_ok=true
-    local _config_dir="${CLAUDE_CONFIG_DIR:-$ENVS_DIR/$current/.claude}"
+    local _config_dir="$ENVS_DIR/$current/.claude"
     local _cj="$_config_dir/.claude.json"
     [[ -f "$_cj" ]] || _cj="$HOME/.claude.json"
     if [[ -f "$_cj" ]]; then
@@ -2764,6 +3213,8 @@ cmd_check() {
         echo "    $(_dim "TZ")         $(_read "$env_dir/tz" "—")"
         echo "    $(_dim "LANG")       $(_read "$env_dir/lang" "—")"
         echo "    $(_dim "env")        ${env_dir/#$HOME/~}/.claude/"
+        echo "    $(_dim "claude")     ~/.claude -> $(readlink "$HOME/.claude" 2>/dev/null || echo "—")"
+        echo "    $(_dim "binary")     ${env_dir/#$HOME/~}/bin/claude -> $(readlink "$env_dir/bin/claude" 2>/dev/null || echo "—")"
         echo
         echo "  $(_bold "Telemetry") ($telemetry_mode mode)"
         if [[ "$telemetry_mode" == "transparent" ]]; then
@@ -2950,6 +3401,8 @@ _claude_cmd_pin() {
     [[ -n "$current" ]] || _die "no active environment"
 
     echo "$ver" > "$ENVS_DIR/$current/version"
+    _sync_env_version_symlink "$current" "$ver"
+    _write_wrapper "$current"
     echo "$(_green_bold "Pinned") $(_bold "$current") -> Claude Code $(_cyan "$ver")"
 }
 
@@ -3557,6 +4010,7 @@ cmd_delete() {
     # stop relay processes and routes
     if [[ -d "$CAC_DIR" ]]; then
         _relay_stop 2>/dev/null || true
+        _restore_host_claude_files
 
         # stop docker port-forward processes
         if [[ -d /tmp/cac-docker-ports ]]; then

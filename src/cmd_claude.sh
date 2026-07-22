@@ -132,6 +132,8 @@ _claude_cmd_pin() {
     [[ -n "$current" ]] || _die "no active environment"
 
     echo "$ver" > "$ENVS_DIR/$current/version"
+    _sync_env_version_symlink "$current" "$ver"
+    _write_wrapper "$current"
     echo "$(_green_bold "Pinned") $(_bold "$current") -> Claude Code $(_cyan "$ver")"
 }
 

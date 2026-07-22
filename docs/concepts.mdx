@@ -17,6 +17,16 @@ A **version** is a Claude Code binary managed by cac. Binaries are downloaded fr
 
 You can have multiple versions installed simultaneously. Each environment can pin a different version.
 
+The public `claude` command stays at a stable path:
+
+```
+~/.local/bin/claude -> ~/.cac/bin/claude -> ~/.cac/envs/work/launcher/claude
+~/.cac/envs/work/bin/claude -> ~/.cac/versions/2.1.81/claude
+~/.claude -> ~/.cac/envs/work/.claude
+```
+
+External tools can keep calling `claude` and reading `~/.claude`; cac repoints the symlinks when you activate an environment or change its pinned version.
+
 ```bash
 cac claude install latest
 cac claude install 2.1.81
@@ -37,7 +47,9 @@ An **environment** is a complete, isolated context for running Claude Code. It i
 
 ```
 ~/.cac/envs/work/
-├── .claude/            # isolated CLAUDE_CONFIG_DIR
+├── .claude/            # isolated Claude config, exposed via ~/.claude
+├── launcher/claude     # environment launcher used by the standard claude entry
+├── bin/claude          # symlink to pinned Claude Code binary
 ├── proxy               # proxy URL (optional)
 ├── version             # pinned Claude Code version
 ├── uuid                # fake hardware UUID

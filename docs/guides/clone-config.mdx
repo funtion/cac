@@ -29,7 +29,7 @@ That's it. Your new `work` environment now has all your customizations, with its
 | `hooks/` | Symlinked | Copied |
 | `skills/` | Symlinked | Copied |
 | `plugins/` | Symlinked | Copied |
-| `CLAUDE.md` | Symlinked | Copied + cac instructions appended |
+| `CLAUDE.md` | Symlinked | Copied |
 | `settings.json` | Layered merge via `settings.override.json` | Layered merge via `settings.override.json` |
 
 What's **not** inherited (always generated fresh per environment):
@@ -59,10 +59,6 @@ cac env create work --clone --no-link
 Resources are **copied** into the new environment. Changes to the source don't affect it, and vice versa.
 
 Best for: creating an environment you want to customize independently.
-
-<Tip>
-With `--no-link`, cac automatically appends its own instructions to the copied `CLAUDE.md` (the "CAC Meta Prompt"). With symlink mode this is skipped, since modifying a symlinked file would affect the source.
-</Tip>
 
 ## Clone from another environment
 
