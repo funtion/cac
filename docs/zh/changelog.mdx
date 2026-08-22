@@ -5,6 +5,17 @@ description: 版本发布历史和重要变更
 
 所有重要变更记录在此，每个条目关联对应的 PR 或 Issue。
 
+## v1.5.9
+<sub>2026-08-22</sub>
+
+**修复：不再强制设置 `CLAUDE_CODE_ATTRIBUTION_HEADER=0`**
+
+wrapper 以前会无条件 `export CLAUDE_CODE_ATTRIBUTION_HEADER=0` 来抑制 billing/attribution 块。这对部分第三方网关的 prompt-cache 命中率有帮助，但在直连 Anthropic 时会弄坏 auto 模式安全分类器（表现为 `claude-opus-* is temporarily unavailable, so auto mode cannot determine the safety of …`）。官方文档现已说明直连 API 的缓存不受该 header 影响，且 Claude Code ≥2.1.237 也修了网关侧 prompt caching。
+
+- 从生成的 `claude` wrapper 中移除无条件的 `export CLAUDE_CODE_ATTRIBUTION_HEADER=0`。
+- `cac env check` 不再把缺少 attribution-header 抑制当成 identity 问题。
+- 已有环境在下次执行任意 `cac` 命令时自动生效（通过 `CAC_WRAPPER_VER` 重新生成 wrapper）。
+
 ## v1.5.7
 <sub>2026-04-27</sub>
 

@@ -191,10 +191,6 @@ cmd_check() {
             (( _id_ok++ )) || true
         fi
     fi
-    # billing header
-    (( _id_total++ )) || true
-    [[ "$wrapper_content" == *"CLAUDE_CODE_ATTRIBUTION_HEADER"* ]] && { (( _id_ok++ )) || true; } || _id_issues+=("billing header exposed")
-
     # display consolidated identity line
     local _id_extra=""
     [[ -f "$env_dir/persona" ]] && _id_extra=" + $(_read "$env_dir/persona")"
@@ -350,7 +346,6 @@ cmd_check() {
         echo "    $([[ -f "$env_dir/git_email" ]] && _green "✓" || _yellow "⚠") git email   $(_read "$env_dir/git_email" "—")"
         echo "    $([[ -f "$env_dir/fake_git_remote" ]] && _green "✓" || _yellow "⚠") repo hash   $(_read "$env_dir/fake_git_remote" "—")"
         echo "    $([[ "$_uid_ok" == "true" ]] && _green "✓" || _yellow "⚠") user_id     $(_read "$env_dir/user_id" "—" | cut -c1-16)..."
-        echo "    $([[ "$wrapper_content" == *"CLAUDE_CODE_ATTRIBUTION_HEADER"* ]] && _green "✓" || _yellow "⚠") billing     $([[ "$wrapper_content" == *"CLAUDE_CODE_ATTRIBUTION_HEADER"* ]] && echo "disabled" || echo "exposed")"
         [[ -f "$env_dir/persona" ]] && echo "    $(_green "✓") persona     $(_read "$env_dir/persona")"
         echo
         echo "  $(_bold "Details")"

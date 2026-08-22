@@ -11,7 +11,7 @@ VERSIONS_DIR="$CAC_DIR/versions"
 # ── utils: colors, read/write, UUID, proxy parsing ───────────────────────
 
 # shellcheck disable=SC2034  # used in build-concatenated cac script
-CAC_VERSION="1.5.8"
+CAC_VERSION="1.5.9"
 
 _read()   { [[ -f "$1" ]] && tr -d '[:space:]' < "$1" || echo "${2:-}"; }
 _die()    { printf '%b\n' "$(_red "error:") $*" >&2; exit 1; }
@@ -1727,9 +1727,6 @@ if [[ "$_telemetry_mode" == "paranoid" ]]; then
     export DISABLE_TELEMETRY=1
 fi
 
-# ── billing header suppression (x-anthropic-billing-header) ──
-export CLAUDE_CODE_ATTRIBUTION_HEADER=0
-
 # with proxy: force OAuth (clear API config to prevent leaks)
 # without proxy: preserve user's API Key / Base URL
 if [[ -n "$PROXY" ]]; then
@@ -3064,10 +3061,6 @@ cmd_check() {
             (( _id_ok++ )) || true
         fi
     fi
-    # billing header
-    (( _id_total++ )) || true
-    [[ "$wrapper_content" == *"CLAUDE_CODE_ATTRIBUTION_HEADER"* ]] && { (( _id_ok++ )) || true; } || _id_issues+=("billing header exposed")
-
     # display consolidated identity line
     local _id_extra=""
     [[ -f "$env_dir/persona" ]] && _id_extra=" + $(_read "$env_dir/persona")"
@@ -3223,7 +3216,6 @@ cmd_check() {
         echo "    $([[ -f "$env_dir/git_email" ]] && _green "✓" || _yellow "⚠") git email   $(_read "$env_dir/git_email" "—")"
         echo "    $([[ -f "$env_dir/fake_git_remote" ]] && _green "✓" || _yellow "⚠") repo hash   $(_read "$env_dir/fake_git_remote" "—")"
         echo "    $([[ "$_uid_ok" == "true" ]] && _green "✓" || _yellow "⚠") user_id     $(_read "$env_dir/user_id" "—" | cut -c1-16)..."
-        echo "    $([[ "$wrapper_content" == *"CLAUDE_CODE_ATTRIBUTION_HEADER"* ]] && _green "✓" || _yellow "⚠") billing     $([[ "$wrapper_content" == *"CLAUDE_CODE_ATTRIBUTION_HEADER"* ]] && echo "disabled" || echo "exposed")"
         [[ -f "$env_dir/persona" ]] && echo "    $(_green "✓") persona     $(_read "$env_dir/persona")"
         echo
         echo "  $(_bold "Details")"

@@ -594,9 +594,6 @@ if [[ "$_telemetry_mode" == "paranoid" ]]; then
     export DISABLE_TELEMETRY=1
 fi
 
-# ── billing header suppression (x-anthropic-billing-header) ──
-export CLAUDE_CODE_ATTRIBUTION_HEADER=0
-
 # with proxy: force OAuth (clear API config to prevent leaks)
 # without proxy: preserve user's API Key / Base URL
 if [[ -n "$PROXY" ]]; then

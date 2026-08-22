@@ -5,6 +5,17 @@ description: Release history and notable changes
 
 All notable changes to this project are documented here. Each entry links to the corresponding PR or issue.
 
+## v1.5.9
+<sub>2026-08-22</sub>
+
+**Fix: stop forcing `CLAUDE_CODE_ATTRIBUTION_HEADER=0`**
+
+The wrapper unconditionally exported `CLAUDE_CODE_ATTRIBUTION_HEADER=0` to suppress the billing/attribution block. That was useful for some third-party gateways' prompt-cache hit rates, but on direct Anthropic connections it broke auto-mode safety classification (`claude-opus-* is temporarily unavailable, so auto mode cannot determine the safety of …`). Official Claude Code docs now say direct-API caching is unaffected either way, and Claude Code ≥2.1.237 also fixed gateway prompt caching.
+
+- Removed the unconditional `export CLAUDE_CODE_ATTRIBUTION_HEADER=0` from the generated `claude` wrapper.
+- `cac env check` no longer treats a missing attribution-header suppress as an identity issue.
+- Existing environments pick this up automatically on the next `cac` invocation (wrapper regenerates via `CAC_WRAPPER_VER`).
+
 ## v1.5.7
 <sub>2026-04-27</sub>
 
