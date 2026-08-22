@@ -525,6 +525,12 @@ if [[ -f "$_env_dir/proxy" ]]; then
     fi
 fi
 
+_proxy_is_loopback() {
+    local _proxy_addr="${1#*://}"
+    _proxy_addr="${_proxy_addr##*@}"
+    [[ "$_proxy_addr" == localhost:* || "$_proxy_addr" == 127.*:* || "$_proxy_addr" == '[::1]:'* || "$_proxy_addr" == ::1:* ]]
+}
+
 if [[ -n "$PROXY" ]]; then
     # pre-flight: proxy connectivity (pure bash, no fork)
     _hp="${PROXY##*@}"; _hp="${_hp##*://}"
@@ -726,14 +732,14 @@ if [[ -z "$_real" ]] || [[ ! -x "$_real" ]]; then
 fi
 [[ -x "$_real" ]] || { echo "[cac] error: claude not found, run 'cac claude install latest'" >&2; exit 1; }
 
-# ── Relay local forwarding (always enabled when proxy is set) ──
+# ── Relay local forwarding (enabled for non-loopback proxy) ──
 # Relay lifecycle: ENVIRONMENT-level, not session-level.
 # - Started on demand by the first session that needs it
 # - Persists across sessions (no cleanup on exit)
 # - Restarted if proxy changes (relay.proxy mismatch)
 # - Stopped by: cac env activate (switch), cac self delete, or machine reboot
 _relay_active=false
-if [[ -n "$PROXY" ]] && [[ -f "$CAC_DIR/relay.js" ]]; then
+if [[ -n "$PROXY" ]] && [[ -f "$CAC_DIR/relay.js" ]] && ! _proxy_is_loopback "$PROXY"; then
     _relay_js="$CAC_DIR/relay.js"
     _relay_pid_file="$CAC_DIR/relay.pid"
     _relay_port_file="$CAC_DIR/relay.port"

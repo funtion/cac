@@ -11,7 +11,7 @@ VERSIONS_DIR="$CAC_DIR/versions"
 # ── utils: colors, read/write, UUID, proxy parsing ───────────────────────
 
 # shellcheck disable=SC2034  # used in build-concatenated cac script
-CAC_VERSION="1.5.7"
+CAC_VERSION="1.5.8"
 
 _read()   { [[ -f "$1" ]] && tr -d '[:space:]' < "$1" || echo "${2:-}"; }
 _die()    { printf '%b\n' "$(_red "error:") $*" >&2; exit 1; }
@@ -227,6 +227,12 @@ _proxy_host_port() {
     local normalized
     normalized=$(_parse_proxy "$1")
     echo "$normalized" | sed 's|.*@||' | sed 's|.*://||'
+}
+
+_proxy_is_loopback() {
+    local hp
+    hp=$(_proxy_host_port "$1")
+    [[ "$hp" == localhost:* || "$hp" == 127.*:* || "$hp" == '[::1]:'* || "$hp" == ::1:* ]]
 }
 
 _proxy_reachable() {
@@ -1652,6 +1658,12 @@ if [[ -f "$_env_dir/proxy" ]]; then
     fi
 fi
 
+_proxy_is_loopback() {
+    local _proxy_addr="${1#*://}"
+    _proxy_addr="${_proxy_addr##*@}"
+    [[ "$_proxy_addr" == localhost:* || "$_proxy_addr" == 127.*:* || "$_proxy_addr" == '[::1]:'* || "$_proxy_addr" == ::1:* ]]
+}
+
 if [[ -n "$PROXY" ]]; then
     # pre-flight: proxy connectivity (pure bash, no fork)
     _hp="${PROXY##*@}"; _hp="${_hp##*://}"
@@ -1853,14 +1865,14 @@ if [[ -z "$_real" ]] || [[ ! -x "$_real" ]]; then
 fi
 [[ -x "$_real" ]] || { echo "[cac] error: claude not found, run 'cac claude install latest'" >&2; exit 1; }
 
-# ── Relay local forwarding (always enabled when proxy is set) ──
+# ── Relay local forwarding (enabled for non-loopback proxy) ──
 # Relay lifecycle: ENVIRONMENT-level, not session-level.
 # - Started on demand by the first session that needs it
 # - Persists across sessions (no cleanup on exit)
 # - Restarted if proxy changes (relay.proxy mismatch)
 # - Stopped by: cac env activate (switch), cac self delete, or machine reboot
 _relay_active=false
-if [[ -n "$PROXY" ]] && [[ -f "$CAC_DIR/relay.js" ]]; then
+if [[ -n "$PROXY" ]] && [[ -f "$CAC_DIR/relay.js" ]] && ! _proxy_is_loopback "$PROXY"; then
     _relay_js="$CAC_DIR/relay.js"
     _relay_pid_file="$CAC_DIR/relay.pid"
     _relay_port_file="$CAC_DIR/relay.port"
@@ -2470,7 +2482,8 @@ _env_cmd_activate() {
 
     # Relay lifecycle
     _relay_stop 2>/dev/null || true
-    if [[ -f "$ENVS_DIR/$name/relay" ]] && [[ "$(_read "$ENVS_DIR/$name/relay")" == "on" ]]; then
+    if [[ -f "$ENVS_DIR/$name/relay" ]] && [[ "$(_read "$ENVS_DIR/$name/relay")" == "on" ]] && \
+       ! _proxy_is_loopback "$(_read "$ENVS_DIR/$name/proxy" "")"; then
         if _relay_start "$name" 2>/dev/null; then
             local rport; rport=$(_read "$CAC_DIR/relay.port")
             echo "  $(_green "+") relay: 127.0.0.1:$rport"
@@ -2874,6 +2887,10 @@ cmd_check() {
 
     local env_dir="$ENVS_DIR/$current"
     local proxy; proxy=$(_parse_proxy "$(_read "$env_dir/proxy" "")")
+    local proxy_is_loopback=false
+    if [[ -n "$proxy" ]] && _proxy_is_loopback "$proxy"; then
+        proxy_is_loopback=true
+    fi
 
     # Resolve version
     local ver; ver=$(_read "$env_dir/version" "")
@@ -3102,6 +3119,10 @@ cmd_check() {
     # ── network check (slow — streaming output) ──
     local proxy_ip=""
     if [[ -n "$proxy" ]]; then
+        if [[ "$proxy_is_loopback" == "true" ]]; then
+            local proxy_hp; proxy_hp=$(_proxy_host_port "$proxy")
+            echo "    $(_green "✓") relay      skipped (local proxy: $proxy_hp)"
+        fi
         if ! _proxy_reachable "$proxy"; then
             echo "    $(_red "✗") proxy      unreachable"
             problems+=("proxy unreachable: $proxy")
@@ -3136,7 +3157,7 @@ cmd_check() {
             fi
 
             # TUN conflict detection
-            if [[ -n "$proxy_ip" ]]; then
+            if [[ "$proxy_is_loopback" != "true" ]] && [[ -n "$proxy_ip" ]]; then
             local has_conflict=false
             local tun_procs="clash|mihomo|sing-box|surge|shadowrocket|v2ray|xray|hysteria|tuic|nekoray"
             local running
@@ -3783,9 +3804,12 @@ _dk_cmd_setup() {
 _dk_cmd_create() {
   _dk_init || return 1
   [[ ! -f "$_dk_env_file" ]] && { _warn "No config found, running setup first..."; _dk_cmd_setup; }
+  local docker_dir build_context
+  docker_dir=$(_docker_dir)
+  build_context=$(cd "${docker_dir}/.." && pwd)
   echo ""
-  _info "Pulling image..."
-  docker pull "$_dk_image"
+  _info "Building image locally..."
+  docker build -f "${docker_dir}/Dockerfile" -t "$_dk_image" "$build_context"
   echo ""
   _ok "Image ready"
   _info "Start with: \033[1mcac docker start\033[0m"

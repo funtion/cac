@@ -55,8 +55,10 @@ jobs:
           fi
           echo "✓ Build output matches committed file"
 
-      - name: Run proxy regression checks
-        run: bash scripts/test-socks5h-probes.sh
+      - name: Run regression checks
+        run: |
+          bash scripts/test-socks5h-probes.sh
+          bash scripts/test-docker-create-local-build.sh
 
   js-check:
     name: JS syntax

@@ -33,20 +33,23 @@ var isSocks5 = upstream.protocol === 'socks5:';
 
 function log(msg) { process.stderr.write('[cac-relay] ' + msg + '\n'); }
 
-// ── Global error handlers (never crash from unhandled errors) ───
+// ── Global error handlers (fail-closed: exit so watchdog restarts) ───
 
 process.on('uncaughtException', function(err) {
-  log('uncaught exception: ' + (err && err.message || err));
+  log('uncaught exception: ' + (err && err.stack || err));
+  process.exit(1);
 });
 process.on('unhandledRejection', function(reason) {
-  log('unhandled rejection: ' + (reason && reason.message || reason));
+  log('unhandled rejection: ' + (reason && reason.stack || reason));
+  process.exit(1);
 });
 
-// ── Upstream heartbeat ──────────────────────────────────────────
+// ── Upstream heartbeat (logging only; does not gate connections) ──
 
 var _upstreamHealthy = true;
 var HEARTBEAT_INTERVAL = 30000; // 30s
 var HEARTBEAT_TIMEOUT = 5000;   // 5s connect timeout
+var CONNECT_TIMEOUT = parseInt(process.env.CAC_RELAY_CONNECT_TIMEOUT || '15000', 10); // handshake timeout
 
 function heartbeat() {
   var sock = net.connect({ port: upstreamPort, host: upstreamHost, timeout: HEARTBEAT_TIMEOUT });
@@ -69,10 +72,42 @@ function heartbeat() {
 
 var _heartbeatTimer = setInterval(heartbeat, HEARTBEAT_INTERVAL);
 
+// ── Helpers ─────────────────────────────────────────────────────
+
+function onceCb(cb) {
+  var called = false;
+  return function(err, a, b) {
+    if (called) return;
+    called = true;
+    cb(err, a, b);
+  };
+}
+
+function attachHandshakeTimeout(sock, cb, label) {
+  // Covers TCP connect AND upstream handshake (HTTP 200 / SOCKS reply).
+  // Cleared by onceCb wrapper only after cb fires — do not clear on 'connect'.
+  var timer = setTimeout(function() {
+    sock.destroy();
+    cb(new Error(label + ' handshake timeout (' + CONNECT_TIMEOUT + 'ms)'));
+  }, CONNECT_TIMEOUT);
+  return function clearHandshakeTimeout() { clearTimeout(timer); };
+}
+
 // ── SOCKS5 handshake ────────────────────────────────────────────
 
 function socks5Connect(targetHost, targetPort, cb) {
-  var sock = net.connect(upstreamPort, upstreamHost, function() {
+  var clearTimer;
+  var done = onceCb(function(err, a, b) {
+    if (clearTimer) clearTimer();
+    cb(err, a, b);
+  });
+  var sock = net.connect({ port: upstreamPort, host: upstreamHost });
+  clearTimer = attachHandshakeTimeout(sock, done, 'socks5');
+
+  function onErr(err) { done(err); }
+  sock.on('error', onErr);
+
+  sock.on('connect', function() {
     var hasAuth = upstreamUser && upstreamPass;
 
     // Greeting: version=5, nmethods=1, method=(0x02 if auth, 0x00 if none)
@@ -91,7 +126,6 @@ function socks5Connect(targetHost, targetPort, cb) {
         buf = buf.slice(2);
 
         if (method === 0x02 && hasAuth) {
-          // Sub-negotiation: version=1, ulen, username, plen, password
           var uBuf = Buffer.from(upstreamUser);
           var pBuf = Buffer.from(upstreamPass);
           var authReq = Buffer.alloc(3 + uBuf.length + pBuf.length);
@@ -106,13 +140,13 @@ function socks5Connect(targetHost, targetPort, cb) {
           sendConnectRequest();
         } else {
           sock.destroy();
-          cb(new Error('SOCKS5 unsupported auth method: ' + method));
+          done(new Error('SOCKS5 unsupported auth method: ' + method));
         }
       } else if (state === 'auth') {
         if (buf.length < 2) return;
         if (buf[1] !== 0x00) {
           sock.destroy();
-          cb(new Error('SOCKS5 auth failed'));
+          done(new Error('SOCKS5 auth failed'));
           return;
         }
         buf = buf.slice(2);
@@ -121,33 +155,32 @@ function socks5Connect(targetHost, targetPort, cb) {
         if (buf.length < 4) return;
         if (buf[1] !== 0x00) {
           sock.destroy();
-          cb(new Error('SOCKS5 connect failed: reply=' + buf[1]));
+          done(new Error('SOCKS5 connect failed: reply=' + buf[1]));
           return;
         }
-        // Parse variable-length address to consume the full reply
         var atyp = buf[3];
         var addrLen;
-        if (atyp === 0x01) addrLen = 4;        // IPv4
-        else if (atyp === 0x04) addrLen = 16;   // IPv6
-        else if (atyp === 0x03) addrLen = 1 + (buf[4] || 0); // Domain
+        if (atyp === 0x01) addrLen = 4;
+        else if (atyp === 0x04) addrLen = 16;
+        else if (atyp === 0x03) addrLen = 1 + (buf[4] || 0);
         else addrLen = 0;
-        var totalLen = 4 + addrLen + 2; // header + addr + port
+        var totalLen = 4 + addrLen + 2;
         if (buf.length < totalLen) return;
 
         var remaining = buf.slice(totalLen);
         sock.removeListener('data', onData);
-        cb(null, sock, remaining);
+        sock.removeListener('error', onErr);
+        done(null, sock, remaining);
       }
     }
 
     function sendConnectRequest() {
-      // CONNECT request: ver=5, cmd=1(connect), rsv=0, atyp=3(domain)
       var hostBuf = Buffer.from(targetHost);
       var req = Buffer.alloc(5 + hostBuf.length + 2);
-      req[0] = 0x05; // version
-      req[1] = 0x01; // connect
-      req[2] = 0x00; // reserved
-      req[3] = 0x03; // domain name
+      req[0] = 0x05;
+      req[1] = 0x01;
+      req[2] = 0x00;
+      req[3] = 0x03;
       req[4] = hostBuf.length;
       hostBuf.copy(req, 5);
       req.writeUInt16BE(targetPort, 5 + hostBuf.length);
@@ -155,14 +188,23 @@ function socks5Connect(targetHost, targetPort, cb) {
       state = 'connect';
     }
   });
-
-  sock.on('error', function(err) { cb(err); });
 }
 
 // ── HTTP CONNECT upstream ───────────────────────────────────────
 
 function httpConnect(targetHost, targetPort, cb) {
-  var sock = net.connect(upstreamPort, upstreamHost, function() {
+  var clearTimer;
+  var done = onceCb(function(err, a, b) {
+    if (clearTimer) clearTimer();
+    cb(err, a, b);
+  });
+  var sock = net.connect({ port: upstreamPort, host: upstreamHost });
+  clearTimer = attachHandshakeTimeout(sock, done, 'http');
+
+  function onErr(err) { done(err); }
+  sock.on('error', onErr);
+
+  sock.on('connect', function() {
     var connectReq = 'CONNECT ' + targetHost + ':' + targetPort + ' HTTP/1.1\r\n' +
                      'Host: ' + targetHost + ':' + targetPort + '\r\n';
     if (upstreamUser) {
@@ -178,22 +220,21 @@ function httpConnect(targetHost, targetPort, cb) {
       var idx = buf.indexOf('\r\n\r\n');
       if (idx === -1) return;
 
-      var statusLine = buf.slice(0, buf.indexOf('\r\n')).toString();
+      var statusLine = buf.slice(0, buf.indexOf('\r\n')).toString('latin1');
       var statusCode = parseInt(statusLine.split(' ')[1], 10);
       var remaining = buf.slice(idx + 4);
 
       sock.removeListener('data', onData);
+      sock.removeListener('error', onErr);
 
       if (statusCode === 200) {
-        cb(null, sock, remaining);
+        done(null, sock, remaining);
       } else {
         sock.destroy();
-        cb(new Error('Upstream CONNECT failed: ' + statusLine));
+        done(new Error('Upstream CONNECT failed: ' + statusLine));
       }
     });
   });
-
-  sock.on('error', function(err) { cb(err); });
 }
 
 // ── Connect to upstream (protocol dispatch) ─────────────────────
@@ -208,33 +249,51 @@ function connectUpstream(targetHost, targetPort, cb) {
 
 // ── Local HTTP proxy server ─────────────────────────────────────
 
-var MAX_CONNECTIONS = 128;
+var MAX_CONNECTIONS = 512;
 var IDLE_TIMEOUT = 1800000; // 30 min — streaming responses can be very long
 var activeConnections = 0;
+var totalAccepted = 0;
+var totalRejected = 0;
+var totalConnectOk = 0;
+var totalConnectFail = 0;
 
 var server = net.createServer({ pauseOnConnect: true }, function(clientSock) {
   if (activeConnections >= MAX_CONNECTIONS) {
+    totalRejected++;
+    log('reject: max connections (' + MAX_CONNECTIONS + ') active=' + activeConnections +
+        ' rejected=' + totalRejected);
     clientSock.destroy();
     return;
   }
   activeConnections++;
+  totalAccepted++;
   clientSock.on('close', function() { activeConnections--; });
 
   // Idle timeout: only kill truly idle sockets, not active streaming ones
-  clientSock.setTimeout(IDLE_TIMEOUT, function() { clientSock.destroy(); });
-  clientSock.on('error', function() {}); // per-connection error: don't crash
+  clientSock.setTimeout(IDLE_TIMEOUT, function() {
+    log('idle timeout client active=' + activeConnections);
+    clientSock.destroy();
+  });
+  clientSock.on('error', function(err) {
+    log('client error: ' + (err && err.message || err));
+  });
+  // Stay paused until headers are parsed / tunnel handed off — avoids data loss
+  // during the async upstream connect window (pipe() will resume).
+  clientSock.on('data', onHeader);
   clientSock.resume();
 
-  var headerBuf = '';
-  clientSock.on('data', function onHeader(chunk) {
-    headerBuf += chunk.toString();
+  var headerBuf = Buffer.alloc(0);
+
+  function onHeader(chunk) {
+    headerBuf = Buffer.concat([headerBuf, chunk]);
     var idx = headerBuf.indexOf('\r\n');
     if (idx === -1) return;
 
     clientSock.removeListener('data', onHeader);
+    clientSock.pause();
 
-    var firstLine = headerBuf.substring(0, idx);
-    var rest = headerBuf.substring(idx + 2);
+    var firstLine = headerBuf.slice(0, idx).toString('latin1');
+    var rest = headerBuf.slice(idx + 2);
 
     // CONNECT host:port HTTP/1.1
     var match = firstLine.match(/^CONNECT\s+([^\s:]+):(\d+)\s+HTTP/i);
@@ -244,12 +303,12 @@ var server = net.createServer({ pauseOnConnect: true }, function(clientSock) {
       // Plain HTTP proxy request — forward entire request
       handlePlainHttp(clientSock, firstLine, rest);
     }
-  });
+  }
 });
 
 function handleConnect(clientSock, targetHost, targetPort, headerRest) {
-  // Consume remaining headers until \r\n\r\n
-  var restBuf = Buffer.from(headerRest);
+  // Consume remaining headers until \r\n\r\n (Buffer-safe)
+  var restBuf = Buffer.isBuffer(headerRest) ? headerRest : Buffer.from(headerRest, 'latin1');
   var consumeHeaders = function() {
     var endIdx = restBuf.indexOf('\r\n\r\n');
     if (endIdx !== -1) {
@@ -261,16 +320,25 @@ function handleConnect(clientSock, targetHost, targetPort, headerRest) {
       restBuf = Buffer.concat([restBuf, chunk]);
       consumeHeaders();
     });
+    clientSock.resume();
   };
 
   function doConnect(trailingData) {
+    clientSock.pause();
     connectUpstream(targetHost, targetPort, function(err, upstreamSock, upstreamExtra) {
       if (err) {
+        totalConnectFail++;
+        log('CONNECT fail ' + targetHost + ':' + targetPort + ' — ' + (err.message || err) +
+            ' (ok=' + totalConnectOk + ' fail=' + totalConnectFail + ' active=' + activeConnections + ')');
         try { clientSock.write('HTTP/1.1 502 Bad Gateway\r\n\r\n'); } catch(_) {}
         clientSock.destroy();
         return;
       }
-      clientSock.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      totalConnectOk++;
+      try { clientSock.write('HTTP/1.1 200 Connection Established\r\n\r\n'); } catch(_) {
+        upstreamSock.destroy();
+        return;
+      }
 
       // Reset idle timeout on data activity (keeps streaming alive)
       upstreamSock.on('data', function() {
@@ -280,11 +348,8 @@ function handleConnect(clientSock, targetHost, targetPort, headerRest) {
         try { upstreamSock.setTimeout(IDLE_TIMEOUT); } catch(_) {}
       });
 
-      // Pipe bidirectionally
-      clientSock.pipe(upstreamSock);
-      upstreamSock.pipe(clientSock);
-
-      // Send any extra data that came in after handshake
+      // Flush any bytes that arrived with the handshake BEFORE piping,
+      // so byte order does not depend on same-tick pipe buffering.
       if (upstreamExtra && upstreamExtra.length > 0) {
         clientSock.write(upstreamExtra);
       }
@@ -292,12 +357,25 @@ function handleConnect(clientSock, targetHost, targetPort, headerRest) {
         upstreamSock.write(trailingData);
       }
 
-      // Per-connection errors: destroy peer, don't crash relay
-      clientSock.on('error', function() { upstreamSock.destroy(); });
-      upstreamSock.on('error', function() { clientSock.destroy(); });
+      // Pipe bidirectionally (pipe resumes paused sockets)
+      clientSock.pipe(upstreamSock);
+      upstreamSock.pipe(clientSock);
+
+      // Per-connection errors: destroy peer, don't crash relay / don't inject HTTP into TLS
+      clientSock.on('error', function(e) {
+        log('tunnel client error ' + targetHost + ':' + targetPort + ' — ' + (e && e.message || e));
+        upstreamSock.destroy();
+      });
+      upstreamSock.on('error', function(e) {
+        log('tunnel upstream error ' + targetHost + ':' + targetPort + ' — ' + (e && e.message || e));
+        clientSock.destroy();
+      });
 
       // Upstream idle timeout
-      upstreamSock.setTimeout(IDLE_TIMEOUT, function() { upstreamSock.destroy(); });
+      upstreamSock.setTimeout(IDLE_TIMEOUT, function() {
+        log('idle timeout upstream ' + targetHost + ':' + targetPort);
+        upstreamSock.destroy();
+      });
     });
   }
 
@@ -305,19 +383,41 @@ function handleConnect(clientSock, targetHost, targetPort, headerRest) {
 }
 
 function handlePlainHttp(clientSock, firstLine, headerRest) {
-  // For plain HTTP requests, forward directly to upstream proxy
-  var sock = net.connect(upstreamPort, upstreamHost, function() {
+  // headerRest is Buffer; keep binary-safe through to upstream
+  var restBuf = Buffer.isBuffer(headerRest) ? headerRest : Buffer.from(String(headerRest), 'latin1');
+  var clearTimer;
+  var done = onceCb(function(err) {
+    if (clearTimer) clearTimer();
+    if (err) {
+      log('plain HTTP upstream connect fail — ' + (err.message || err));
+      clientSock.destroy();
+    }
+  });
+  var sock = net.connect({ port: upstreamPort, host: upstreamHost });
+  clearTimer = attachHandshakeTimeout(sock, done, 'plain-http');
+
+  function onErr(err) { done(err); }
+  sock.on('error', onErr);
+
+  sock.on('connect', function() {
+    // TCP connected — clear handshake timer; request/response is open-ended
+    if (clearTimer) clearTimer();
+    sock.removeListener('error', onErr);
     var authHeader = '';
     if (upstreamUser) {
       var cred = Buffer.from(upstreamUser + ':' + upstreamPass).toString('base64');
       authHeader = 'Proxy-Authorization: Basic ' + cred + '\r\n';
     }
-    sock.write(firstLine + '\r\n' + authHeader + headerRest);
+    var head = Buffer.from(firstLine + '\r\n' + authHeader, 'latin1');
+    sock.write(Buffer.concat([head, restBuf]));
     clientSock.pipe(sock);
     sock.pipe(clientSock);
+    sock.on('error', function(err) {
+      log('plain HTTP error — ' + (err && err.message || err));
+      clientSock.destroy();
+    });
+    clientSock.on('error', function() { sock.destroy(); });
   });
-  sock.on('error', function() { clientSock.destroy(); });
-  clientSock.on('error', function() { sock.destroy(); });
 }
 
 // ── Lifecycle ───────────────────────────────────────────────────
@@ -346,7 +446,7 @@ function startServer() {
   server.listen(listenPort, '127.0.0.1', function() {
     writePid();
     log('listening on 127.0.0.1:' + listenPort + ' \u2192 ' + upstreamHost + ':' + upstreamPort +
-        (isSocks5 ? ' (socks5)' : ' (http)'));
+        (isSocks5 ? ' (socks5)' : ' (http)') + ' max_conn=' + MAX_CONNECTIONS);
   });
 }
 

@@ -1,7 +1,7 @@
 # ── utils: colors, read/write, UUID, proxy parsing ───────────────────────
 
 # shellcheck disable=SC2034  # used in build-concatenated cac script
-CAC_VERSION="1.5.7"
+CAC_VERSION="1.5.8"
 
 _read()   { [[ -f "$1" ]] && tr -d '[:space:]' < "$1" || echo "${2:-}"; }
 _die()    { printf '%b\n' "$(_red "error:") $*" >&2; exit 1; }
@@ -217,6 +217,12 @@ _proxy_host_port() {
     local normalized
     normalized=$(_parse_proxy "$1")
     echo "$normalized" | sed 's|.*@||' | sed 's|.*://||'
+}
+
+_proxy_is_loopback() {
+    local hp
+    hp=$(_proxy_host_port "$1")
+    [[ "$hp" == localhost:* || "$hp" == 127.*:* || "$hp" == '[::1]:'* || "$hp" == ::1:* ]]
 }
 
 _proxy_reachable() {

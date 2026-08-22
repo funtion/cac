@@ -14,6 +14,10 @@ cmd_check() {
 
     local env_dir="$ENVS_DIR/$current"
     local proxy; proxy=$(_parse_proxy "$(_read "$env_dir/proxy" "")")
+    local proxy_is_loopback=false
+    if [[ -n "$proxy" ]] && _proxy_is_loopback "$proxy"; then
+        proxy_is_loopback=true
+    fi
 
     # Resolve version
     local ver; ver=$(_read "$env_dir/version" "")
@@ -242,6 +246,10 @@ cmd_check() {
     # ── network check (slow — streaming output) ──
     local proxy_ip=""
     if [[ -n "$proxy" ]]; then
+        if [[ "$proxy_is_loopback" == "true" ]]; then
+            local proxy_hp; proxy_hp=$(_proxy_host_port "$proxy")
+            echo "    $(_green "✓") relay      skipped (local proxy: $proxy_hp)"
+        fi
         if ! _proxy_reachable "$proxy"; then
             echo "    $(_red "✗") proxy      unreachable"
             problems+=("proxy unreachable: $proxy")
@@ -276,7 +284,7 @@ cmd_check() {
             fi
 
             # TUN conflict detection
-            if [[ -n "$proxy_ip" ]]; then
+            if [[ "$proxy_is_loopback" != "true" ]] && [[ -n "$proxy_ip" ]]; then
             local has_conflict=false
             local tun_procs="clash|mihomo|sing-box|surge|shadowrocket|v2ray|xray|hysteria|tuic|nekoray"
             local running

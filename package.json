@@ -1,6 +1,6 @@
 {
   "name": "claude-cac",
-  "version": "1.5.7",
+  "version": "1.5.8",
   "description": "Isolate, protect, and manage your Claude Code — versions, environments, identity, and proxy.",
   "bin": {
     "cac": "cac"
@@ -17,7 +17,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "postinstall": "node scripts/postinstall.js"
+    "postinstall": "node scripts/postinstall.js",
+    "test:relay": "node test-relay-unit.js"
   },
   "keywords": [
     "claude",

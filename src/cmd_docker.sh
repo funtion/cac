@@ -302,9 +302,12 @@ _dk_cmd_setup() {
 _dk_cmd_create() {
   _dk_init || return 1
   [[ ! -f "$_dk_env_file" ]] && { _warn "No config found, running setup first..."; _dk_cmd_setup; }
+  local docker_dir build_context
+  docker_dir=$(_docker_dir)
+  build_context=$(cd "${docker_dir}/.." && pwd)
   echo ""
-  _info "Pulling image..."
-  docker pull "$_dk_image"
+  _info "Building image locally..."
+  docker build -f "${docker_dir}/Dockerfile" -t "$_dk_image" "$build_context"
   echo ""
   _ok "Image ready"
   _info "Start with: \033[1mcac docker start\033[0m"

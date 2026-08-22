@@ -280,7 +280,8 @@ _env_cmd_activate() {
 
     # Relay lifecycle
     _relay_stop 2>/dev/null || true
-    if [[ -f "$ENVS_DIR/$name/relay" ]] && [[ "$(_read "$ENVS_DIR/$name/relay")" == "on" ]]; then
+    if [[ -f "$ENVS_DIR/$name/relay" ]] && [[ "$(_read "$ENVS_DIR/$name/relay")" == "on" ]] && \
+       ! _proxy_is_loopback "$(_read "$ENVS_DIR/$name/proxy" "")"; then
         if _relay_start "$name" 2>/dev/null; then
             local rport; rport=$(_read "$CAC_DIR/relay.port")
             echo "  $(_green "+") relay: 127.0.0.1:$rport"
