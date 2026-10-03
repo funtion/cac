@@ -26,8 +26,11 @@ fi
 
 # 2. 下载 cac 到 ~/bin
 mkdir -p "$BIN_DIR"
-printf "下载 cac ... "
+printf "下载 cac 和运行时文件 ... "
 curl -fsSL "$REPO/cac" -o "$BIN_DIR/cac"
+for runtime_file in fingerprint-hook.js relay.js; do
+    curl -fsSL "$REPO/src/$runtime_file" -o "$BIN_DIR/$runtime_file"
+done
 chmod +x "$BIN_DIR/cac"
 green "✓"
 

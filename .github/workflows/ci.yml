@@ -57,6 +57,7 @@ jobs:
 
       - name: Run regression checks
         run: |
+          python3 scripts/test-runtime-files.py
           bash scripts/test-socks5h-probes.sh
           bash scripts/test-docker-create-local-build.sh
 
@@ -74,4 +75,5 @@ jobs:
         run: |
           node --check src/relay.js
           node --check src/fingerprint-hook.js
+          node scripts/test-fingerprint-hook.js
           echo "✓ All JS files parse successfully"

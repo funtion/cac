@@ -602,18 +602,8 @@ if [[ -n "$PROXY" ]]; then
     unset ANTHROPIC_API_KEY
 fi
 
-# ── git identity spoofing ──
-# Intercept `git config --get user.email` at process level (telemetry read only)
-# Do NOT set GIT_AUTHOR_EMAIL/GIT_COMMITTER_EMAIL — those would affect real git commits
-if [[ -f "$_env_dir/git_email" ]]; then
-    export CAC_GIT_EMAIL=$(tr -d '[:space:]' < "$_env_dir/git_email")
-fi
-
-# ── repository fingerprint (rh) spoofing ──
-# Claude computes rh=SHA256(git_remote_url) per event — cross-account linkage vector
-if [[ -f "$_env_dir/fake_git_remote" ]]; then
-    export CAC_FAKE_GIT_REMOTE=$(tr -d '[:space:]' < "$_env_dir/fake_git_remote")
-fi
+# Preserve real Git metadata and container detection, including in nested sessions.
+unset CAC_GIT_EMAIL CAC_FAKE_GIT_REMOTE CAC_HIDE_DOCKER
 
 # ── Trusted Device Token (preemptive) ──
 # tengu_sessions_elevated_auth_enforcement gate is currently off but mechanism is ready
@@ -654,7 +644,6 @@ if [[ -f "$_env_dir/persona" ]]; then
             export TERM_PROGRAM="vscode"
             ;;
     esac
-    export CAC_HIDE_DOCKER=1
 fi
 
 # ── NS-level DNS interception ──
@@ -697,8 +686,10 @@ fi
 # Node.js-level fingerprint interception (bypasses shell shim limitations)
 [[ -f "$_env_dir/mac_address" ]] && export CAC_MAC=$(tr -d '[:space:]' < "$_env_dir/mac_address")
 [[ -f "$_env_dir/machine_id" ]]  && export CAC_MACHINE_ID=$(tr -d '[:space:]' < "$_env_dir/machine_id")
-export CAC_USERNAME="user-$(echo "$_name" | cut -c1-8)"
-export USER="$CAC_USERNAME" LOGNAME="$CAC_USERNAME"
+# Usernames are used to locate home directories and must match the real OS user.
+unset CAC_USERNAME
+_real_username=$(id -un)
+export USER="$_real_username" LOGNAME="$_real_username"
 if [[ -r "$CAC_DIR/fingerprint-hook.js" ]]; then
     case "${NODE_OPTIONS:-}" in
         *fingerprint-hook.js*) ;;

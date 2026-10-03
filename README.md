@@ -152,7 +152,7 @@ socks5://u:p@host:port    指定协议
 |:---|:---|
 | 硬件 UUID 隔离 | macOS `ioreg` / Linux `machine-id` / Windows `wmic`+`reg` shim |
 | 主机名 / MAC 隔离 | Shell shim + Node.js `os.hostname()` / `os.networkInterfaces()` hook |
-| Node.js 指纹钩子 | `fingerprint-hook.js` 通过 `NODE_OPTIONS --require` 注入 |
+| 设备身份钩子 | 替换主机名、MAC 和 machine-id；保留真实用户名、Git 元数据和 Docker 检测。Node 使用 `NODE_OPTIONS`，Bun 使用 `BUN_OPTIONS` |
 | 遥测阻断 | DNS guard + 环境变量 + fetch 拦截 + 分级模式（`conservative`/`aggressive`） |
 | 健康检查 bypass | 进程内 Node.js 拦截（无需 /etc/hosts 或 root） |
 | mTLS 客户端证书 | 自签 CA + 每环境独立客户端证书 |
@@ -334,7 +334,7 @@ Each environment is fully isolated:
 |:---|:---|
 | Hardware UUID isolation | macOS `ioreg` / Linux `machine-id` / Windows `wmic`+`reg` shim |
 | Hostname / MAC isolation | Shell shim + Node.js `os.hostname()` / `os.networkInterfaces()` hook |
-| Node.js fingerprint hook | `fingerprint-hook.js` via `NODE_OPTIONS --require` |
+| Device identity hook | Replaces hostname, MAC and machine-id; preserves user identity, Git metadata and Docker detection. Uses `NODE_OPTIONS` for Node and `BUN_OPTIONS` for Bun |
 | Telemetry blocking | DNS guard + env vars + fetch interception + modes (`conservative`/`aggressive`) |
 | Health check bypass | In-process Node.js interception (no `/etc/hosts`, no root) |
 | mTLS client certificates | Self-signed CA + per-profile client certs |

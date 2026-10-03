@@ -57,7 +57,7 @@ if (home && fs.existsSync(wrapperPath)) {
 }
 
 // Migrate existing environments: generate missing files added in v1.5.0
-// (fake_git_remote, git_email, device_token)
+// (device_token)
 try {
   var crypto = require('crypto');
   var envsDir = path.join(cacDir, 'envs');
@@ -66,17 +66,6 @@ try {
     for (var ei = 0; ei < envs.length; ei++) {
       var envDir = path.join(envsDir, envs[ei]);
       if (!fs.statSync(envDir).isDirectory()) continue;
-      // fake_git_remote
-      if (!fs.existsSync(path.join(envDir, 'fake_git_remote'))) {
-        var u1 = crypto.randomUUID().split('-')[0];
-        var u2 = crypto.randomUUID().split('-')[1];
-        fs.writeFileSync(path.join(envDir, 'fake_git_remote'), 'https://github.com/user-' + u1 + '/project-' + u2 + '.git\n');
-      }
-      // git_email
-      if (!fs.existsSync(path.join(envDir, 'git_email'))) {
-        var u3 = crypto.randomUUID().split('-')[0].toLowerCase();
-        fs.writeFileSync(path.join(envDir, 'git_email'), 'user-' + u3 + '@users.noreply.github.com\n');
-      }
       // device_token
       if (!fs.existsSync(path.join(envDir, 'device_token'))) {
         fs.writeFileSync(path.join(envDir, 'device_token'), crypto.randomBytes(32).toString('hex') + '\n');

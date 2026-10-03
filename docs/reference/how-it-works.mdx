@@ -59,12 +59,13 @@ Shims only intercept targeted calls. All other invocations pass through to the r
 
 - `os.hostname()` → `CAC_HOSTNAME`
 - `os.networkInterfaces()` → fake MAC from `CAC_MAC`
-- `os.userInfo()` → `CAC_USERNAME`
 - `fs.readFileSync('/etc/machine-id')` → `CAC_MACHINE_ID`
+
+User identity, Git metadata and Docker detection stay unchanged. `USER` and `LOGNAME` use the actual OS user. Bun executables load this hook through `BUN_OPTIONS --preload`.
 
 ### Layer 3: Environment variables
 
-Identity values are also exported as env vars (`CAC_HOSTNAME`, `CAC_MAC`, `CAC_MACHINE_ID`, `CAC_USERNAME`) so they're available to any child process.
+Identity values are also exported as env vars (`CAC_HOSTNAME`, `CAC_MAC`, `CAC_MACHINE_ID`) so they're available to any child process.
 
 ## Telemetry blocking
 

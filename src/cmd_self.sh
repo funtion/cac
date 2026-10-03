@@ -17,7 +17,12 @@ _self_cmd_update() {
             echo "  Install method: $(_cyan "bash")"
             local bin_dir="$HOME/bin"
             mkdir -p "$bin_dir"
-            echo "  Downloading latest cac"
+            echo "  Downloading latest cac and runtime files"
+            local runtime_file
+            for runtime_file in fingerprint-hook.js relay.js; do
+                curl -fsSL "$_SELF_REPO/src/$runtime_file" -o "$bin_dir/$runtime_file.tmp" || _die "download failed: $runtime_file"
+                mv "$bin_dir/$runtime_file.tmp" "$bin_dir/$runtime_file"
+            done
             if curl -fL --progress-bar -o "$bin_dir/cac.tmp" "$_SELF_REPO/cac" 2>&1; then
                 chmod +x "$bin_dir/cac.tmp"
                 mv "$bin_dir/cac.tmp" "$bin_dir/cac"
@@ -26,7 +31,7 @@ _self_cmd_update() {
                 _die "download failed"
             fi
             # Regenerate wrapper and shims from new binary
-            _ensure_initialized
+            "$bin_dir/cac" env ls >/dev/null
             ;;
         *)
             _die "unknown install method\n  Reinstall with: curl -fsSL $_SELF_REPO/install.sh | bash"

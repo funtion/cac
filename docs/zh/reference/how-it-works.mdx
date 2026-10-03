@@ -59,12 +59,13 @@ claude（用户输入）
 
 - `os.hostname()` → `CAC_HOSTNAME`
 - `os.networkInterfaces()` → 来自 `CAC_MAC` 的伪装 MAC
-- `os.userInfo()` → `CAC_USERNAME`
 - `fs.readFileSync('/etc/machine-id')` → `CAC_MACHINE_ID`
+
+用户名、Git 元数据和 Docker 检测保持真实；`USER` 和 `LOGNAME` 根据实际系统用户设置。Bun 原生二进制通过 `BUN_OPTIONS --preload` 加载此钩子。
 
 ### 第三层：环境变量
 
-身份值也作为环境变量导出（`CAC_HOSTNAME`、`CAC_MAC`、`CAC_MACHINE_ID`、`CAC_USERNAME`），以便任何子进程都可以访问。
+身份值也作为环境变量导出（`CAC_HOSTNAME`、`CAC_MAC`、`CAC_MACHINE_ID`），以便任何子进程都可以访问。
 
 ## 遥测拦截
 

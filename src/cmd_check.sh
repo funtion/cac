@@ -149,33 +149,23 @@ cmd_check() {
     local os; os=$(_detect_os)
     local _id_ok=0 _id_total=0 _id_issues=()
 
-    # fingerprint hook
+    # Missing or unreadable hooks must count as a failed check.
     local _fp_ok=false
-    if [[ -f "$CAC_DIR/fingerprint-hook.js" ]] && [[ -f "$env_dir/hostname" ]]; then
+    (( _id_total++ )) || true
+    if [[ ! -r "$CAC_DIR/fingerprint-hook.js" ]]; then
+        _id_issues+=("fingerprint hook missing or unreadable")
+    elif [[ ! -s "$env_dir/hostname" ]]; then
+        _id_issues+=("device hostname missing")
+    else
         local expected_hn; expected_hn=$(_read "$env_dir/hostname")
         local actual_hn
         actual_hn=$(NODE_OPTIONS="--require $CAC_DIR/fingerprint-hook.js" CAC_HOSTNAME="$expected_hn" \
             node -e "process.stdout.write(require('os').hostname())" 2>/dev/null || true)
-        (( _id_total++ )) || true
         if [[ "$actual_hn" == "$expected_hn" ]]; then
             _fp_ok=true; (( _id_ok++ )) || true
         else
             _id_issues+=("fingerprint hook not working")
         fi
-    fi
-    # git email
-    (( _id_total++ )) || true
-    if [[ -f "$env_dir/git_email" ]]; then
-        (( _id_ok++ )) || true
-    else
-        _id_issues+=("git email not spoofed")
-    fi
-    # repo hash
-    (( _id_total++ )) || true
-    if [[ -f "$env_dir/fake_git_remote" ]]; then
-        (( _id_ok++ )) || true
-    else
-        _id_issues+=("repo hash not spoofed")
     fi
     # user_id tracking: sync from .claude.json after login (real userID wins)
     local _uid_ok=true
@@ -343,8 +333,7 @@ cmd_check() {
     if [[ "$verbose" == "true" ]]; then
         echo "  $(_bold "Identity")"
         echo "    $([[ "$_fp_ok" == "true" ]] && _green "✓" || _red "✗") hostname    $(_read "$env_dir/hostname" "—")"
-        echo "    $([[ -f "$env_dir/git_email" ]] && _green "✓" || _yellow "⚠") git email   $(_read "$env_dir/git_email" "—")"
-        echo "    $([[ -f "$env_dir/fake_git_remote" ]] && _green "✓" || _yellow "⚠") repo hash   $(_read "$env_dir/fake_git_remote" "—")"
+        echo "    $(_dim "○") Git / Docker metadata unchanged"
         echo "    $([[ "$_uid_ok" == "true" ]] && _green "✓" || _yellow "⚠") user_id     $(_read "$env_dir/user_id" "—" | cut -c1-16)..."
         [[ -f "$env_dir/persona" ]] && echo "    $(_green "✓") persona     $(_read "$env_dir/persona")"
         echo

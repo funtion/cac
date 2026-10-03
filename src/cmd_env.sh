@@ -103,8 +103,6 @@ _env_cmd_create() {
     echo "$lang"              > "$env_dir/lang"
     [[ -n "$claude_ver" ]]    && echo "$claude_ver" > "$env_dir/version"
     echo "$env_type"          > "$env_dir/type"
-    echo "$(_new_git_remote)" > "$env_dir/fake_git_remote"
-    echo "$(_new_git_email)"  > "$env_dir/git_email"
     echo "$(_new_device_token)" > "$env_dir/device_token"
     date -u +"%Y-%m-%dT%H:%M:%S.000Z" > "$env_dir/first_start_time"
     [[ -n "$persona" ]] && echo "$persona" > "$env_dir/persona"
@@ -310,7 +308,7 @@ _env_cmd_set() {
         echo "    $(_green "set") [name] telemetry <stealth|paranoid|transparent>"
         echo "                                                          Telemetry blocking: stealth (1p_events only), paranoid (max), transparent (none)"
         echo "    $(_green "set") [name] persona <macos-vscode|macos-cursor|macos-iterm|linux-desktop|--remove>"
-        echo "                                                          Terminal preset: inject desktop env vars, hide Docker signals (for containers)"
+        echo "                                                          Terminal preset: inject desktop env vars; preserve Docker detection"
         echo
         echo "  $(_dim "If name is omitted, uses the current active environment.")"
         echo
